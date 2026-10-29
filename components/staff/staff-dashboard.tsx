@@ -73,6 +73,57 @@ export function StaffDashboard({
 
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
+  // User-scoped unread custom cake tracking
+  const storageKey = React.useMemo(() => {
+    return `namma_bakery_staff_custom_cake_last_seen_${userEmail || "default"}`;
+  }, [userEmail]);
+
+  // Read initial seen timestamp lazily from localStorage or default to latest request timestamp
+  const [lastSeenTimestamp, setLastSeenTimestamp] = React.useState<number>(() => {
+    const latestReq = customCakeRequests[0];
+    if (typeof window === "undefined") {
+      return latestReq ? new Date(latestReq.created_at).getTime() : 0;
+    }
+    const initialTime = latestReq ? new Date(latestReq.created_at).getTime() : Date.now();
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = parseInt(stored, 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+      localStorage.setItem(storageKey, String(initialTime));
+      return initialTime;
+    } catch {
+      return initialTime;
+    }
+  });
+
+  // Switch tabs and mark as seen when opening Custom Cake Requests
+  const handleSelectTab = (tab: "ORDERS" | "CUSTOM_CAKES") => {
+    setActiveTab(tab);
+    if (tab === "CUSTOM_CAKES") {
+      const now = Date.now();
+      try {
+        localStorage.setItem(storageKey, String(now));
+      } catch {
+        // Safe guard
+      }
+      setLastSeenTimestamp(now);
+    }
+  };
+
+  // Determine if there is any custom cake request created after the last seen timestamp
+  const hasUnreadCustomCakes = React.useMemo(() => {
+    if (activeTab === "CUSTOM_CAKES") return false;
+    if (customCakeRequests.length === 0) return false;
+
+    const latest = customCakeRequests[0];
+    if (!latest?.created_at) return false;
+
+    const latestTime = new Date(latest.created_at).getTime();
+    return latestTime > lastSeenTimestamp;
+  }, [activeTab, lastSeenTimestamp, customCakeRequests]);
+
   // Sync selected order objects
   const selectedOrder = React.useMemo(() => {
     return orders.find((o) => o.id === selectedOrderId) || null;
@@ -110,7 +161,7 @@ export function StaffDashboard({
         <div className="flex items-center gap-2 border-b border-border pb-3">
           <button
             type="button"
-            onClick={() => setActiveTab("ORDERS")}
+            onClick={() => handleSelectTab("ORDERS")}
             className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors ${
               activeTab === "ORDERS"
                 ? "bg-cocoa text-cream"
@@ -132,7 +183,7 @@ export function StaffDashboard({
 
           <button
             type="button"
-            onClick={() => setActiveTab("CUSTOM_CAKES")}
+            onClick={() => handleSelectTab("CUSTOM_CAKES")}
             className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors relative ${
               activeTab === "CUSTOM_CAKES"
                 ? "bg-caramel text-white"
@@ -151,11 +202,12 @@ export function StaffDashboard({
               {customCakeRequests.length}
             </span>
 
-            {/* Notification pip if there are pending enquiries */}
-            {customCakeSummary.pending > 0 && (
+            {/* Notification pip if there are new unread enquiries */}
+            {hasUnreadCustomCakes && (
               <span
                 className="size-2 rounded-full bg-amber-500 absolute -top-1 -right-1 ring-2 ring-background"
-                title={`${customCakeSummary.pending} pending custom cake request(s)`}
+                title="New custom cake request received"
+                aria-label="New unread custom cake request"
               />
             )}
           </button>
@@ -175,7 +227,7 @@ export function StaffDashboard({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               <section
                 aria-label="Order Queue"
-                className={`${
+                className={`min-w-0 ${
                   selectedOrder
                     ? "hidden lg:block lg:col-span-7 xl:col-span-8"
                     : "col-span-12"
@@ -193,7 +245,7 @@ export function StaffDashboard({
               {selectedOrder ? (
                 <aside
                   aria-label="Order Details"
-                  className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs"
+                  className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs min-w-0"
                 >
                   <StaffOrderDetail
                     key={selectedOrder.id}
@@ -233,7 +285,7 @@ export function StaffDashboard({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               <section
                 aria-label="Custom Cake Queue"
-                className={`${
+                className={`min-w-0 ${
                   selectedCustomCake
                     ? "hidden lg:block lg:col-span-7 xl:col-span-8"
                     : "col-span-12"
@@ -251,7 +303,7 @@ export function StaffDashboard({
               {selectedCustomCake ? (
                 <aside
                   aria-label="Custom Cake Details"
-                  className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs"
+                  className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs min-w-0"
                 >
                   <StaffCustomCakeDetail
                     key={selectedCustomCake.id}

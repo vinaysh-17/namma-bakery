@@ -144,7 +144,7 @@ export function StaffCustomCakeDetail({
         {/* Next Operations Bar */}
         <div className="rounded-sm border border-border bg-background p-3.5 space-y-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
-            Custom Cake Operations
+            Available Operations
           </span>
           <div className="flex flex-wrap gap-2">
             {request.status === "SUBMITTED" && (
@@ -246,16 +246,20 @@ export function StaffCustomCakeDetail({
             Customer Information
           </span>
           <div className="rounded-sm border border-border bg-background p-3.5 space-y-2 text-xs">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <span className="font-semibold text-foreground text-sm">
                 {request.customer_name}
               </span>
               <a
                 href={`tel:${request.customer_phone}`}
-                className="inline-flex items-center gap-1 text-caramel hover:underline font-semibold"
+                className="inline-flex items-center gap-1 text-caramel hover:underline font-semibold shrink-0"
               >
                 <Phone className="size-3.5" />
-                <span>+91 {request.customer_phone}</span>
+                <span>
+                  {request.customer_phone.startsWith("+")
+                    ? request.customer_phone
+                    : `+91 ${request.customer_phone}`}
+                </span>
               </a>
             </div>
             {request.customer_email && (
@@ -344,13 +348,15 @@ export function StaffCustomCakeDetail({
 
             {request.message_on_cake && (
               <div className="pt-2 border-t border-border/50">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-1">
-                  <Sparkles className="size-3" />
-                  <span>Inscription on Cake</span>
-                </span>
-                <p className="font-serif italic text-sm text-foreground bg-amber-50/70 p-2.5 rounded-xs border border-amber-300 dark:bg-amber-950/40 dark:border-amber-800">
-                  &ldquo;{request.message_on_cake}&rdquo;
-                </p>
+                <div className="rounded-sm border border-amber-300 bg-amber-50/70 p-2.5 text-xs text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+                  <div className="flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-300 mb-0.5">
+                    <Sparkles className="size-3.5 shrink-0" />
+                    <span>Cake Inscription</span>
+                  </div>
+                  <p className="font-serif italic text-sm pl-5">
+                    &ldquo;{request.message_on_cake}&rdquo;
+                  </p>
+                </div>
               </div>
             )}
           </div>
