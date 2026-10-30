@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { getStaffSession } from "@/lib/staff/auth";
 import { StaffLoginForm } from "@/components/staff/staff-login-form";
 
@@ -15,6 +16,7 @@ export const metadata: Metadata = {
 };
 
 export default async function StaffLoginPage() {
+  await connection();
   const session = await getStaffSession();
 
   // If already authenticated with staff privileges, go directly to the dashboard

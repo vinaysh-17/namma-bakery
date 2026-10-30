@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { getMenuProducts } from "@/lib/menu/queries";
 import { getBakeryJsonLd } from "@/lib/utils/seo";
 import { HeroSection } from "@/components/home/hero-section";
@@ -18,6 +19,7 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
+  await connection();
   const productsResult = await getMenuProducts();
   const products = productsResult.data ?? [];
   const jsonLd = getBakeryJsonLd();
