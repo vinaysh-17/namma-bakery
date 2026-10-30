@@ -1,6 +1,7 @@
 import "server-only";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { StaffRole } from "./types";
 
@@ -103,6 +104,7 @@ export async function getStaffSession(): Promise<StaffSession> {
  * If authenticated but lacking staff privileges, returns forbidden session.
  */
 export async function requireStaffSession(): Promise<StaffSession> {
+  await connection();
   const session = await getStaffSession();
 
   if (!session.user) {

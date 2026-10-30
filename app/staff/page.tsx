@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ShieldAlert, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { connection } from "next/server";
 import { requireStaffSession } from "@/lib/staff/auth";
 import {
   getStaffOrders,
@@ -8,6 +9,7 @@ import {
   getStaffCustomCakeRequests,
   calculateCustomCakeSummary,
 } from "@/lib/staff/queries";
+import { getPortalNotifications } from "@/lib/notifications/queries";
 import { StaffDashboard } from "@/components/staff/staff-dashboard";
 import { staffSignOutAction } from "@/lib/staff/actions";
 
@@ -23,6 +25,7 @@ export const metadata: Metadata = {
 };
 
 export default async function StaffPage() {
+  await connection();
   const session = await requireStaffSession();
 
   // If user is authenticated but not authorized in staff_roles (forbidden)
@@ -63,9 +66,10 @@ export default async function StaffPage() {
   }
 
   // Fetch live orders & custom cake requests under staff RLS
-  const [ordersRes, customCakesRes] = await Promise.all([
+  const [ordersRes, customCakesRes, notificationsRes] = await Promise.all([
     getStaffOrders(),
     getStaffCustomCakeRequests(),
+    getPortalNotifications(),
   ]);
 
   const orders = ordersRes.orders;
@@ -101,6 +105,8 @@ export default async function StaffPage() {
       customCakeSummary={customCakeSummary}
       userEmail={session.user?.email}
       role={session.role}
+      initialNotifications={notificationsRes.notifications}
+      initialUnreadCount={notificationsRes.unreadCount}
     />
   );
 }

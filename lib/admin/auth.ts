@@ -1,5 +1,6 @@
 import "server-only";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { getStaffSession, type StaffSession } from "@/lib/staff/auth";
 
 export interface AdminAuthCheck {
@@ -14,6 +15,7 @@ export interface AdminAuthCheck {
  * - If active ADMIN -> returns authorized: true with session.
  */
 export async function requireAdminSession(): Promise<AdminAuthCheck> {
+  await connection();
   const session = await getStaffSession();
 
   if (!session.user) {

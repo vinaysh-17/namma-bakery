@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { connection } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminForbidden } from "@/components/admin/admin-forbidden";
 import { AdminDashboard } from "@/components/admin/admin-dashboard";
@@ -12,6 +13,7 @@ import {
   getAdminStaffMembers,
   getAdminAuditLogs,
 } from "@/lib/admin/queries";
+import { getPortalNotifications } from "@/lib/notifications/queries";
 
 export const instant = false;
 
@@ -26,6 +28,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminPage() {
+  await connection();
   const { authorized, session } = await requireAdminSession();
 
   // If user is authenticated with EMPLOYEE privileges or lacking active admin status
@@ -47,6 +50,7 @@ export default async function AdminPage() {
     storeOpsRes,
     staffRes,
     auditRes,
+    notificationsRes,
   ] = await Promise.all([
     getAdminOverviewSummary(),
     getAdminCategories(),
@@ -55,6 +59,7 @@ export default async function AdminPage() {
     getAdminStoreSettings(),
     getAdminStaffMembers(),
     getAdminAuditLogs(25),
+    getPortalNotifications(),
   ]);
 
   if (categoriesRes.error && productsRes.error) {
@@ -92,6 +97,8 @@ export default async function AdminPage() {
       auditLogs={auditRes.logs}
       currentUserEmail={session.user?.email}
       currentUserId={session.user?.id}
+      initialNotifications={notificationsRes.notifications}
+      initialUnreadCount={notificationsRes.unreadCount}
     />
   );
 }

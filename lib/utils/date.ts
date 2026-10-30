@@ -212,11 +212,12 @@ export function isWithinBakeryHours(
  */
 export function isStoreCurrentlyPaused(
   ordersPausedUntil: string | null | undefined,
-  nowMs: number = Date.now()
+  nowMs?: number
 ): boolean {
   if (!ordersPausedUntil) return false;
   const parsed = new Date(ordersPausedUntil).getTime();
   if (Number.isNaN(parsed)) return false;
-  return parsed > nowMs;
+  const current = nowMs ?? (typeof window !== "undefined" ? Date.now() : 0);
+  return parsed > current;
 }
 
