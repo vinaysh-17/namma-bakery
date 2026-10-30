@@ -126,7 +126,7 @@ export const adminStoreSettingsSchema = z.object({
   slot_minutes: z.union([z.literal(15), z.literal(30), z.literal(60)]),
   max_orders_per_slot: z.coerce.number().int().min(0, "Capacity must be non-negative"),
   max_custom_per_day: z.coerce.number().int().min(0, "Capacity must be non-negative"),
-  quote_validity_hours: z.coerce.number().int().positive("Must be at least 1 hour"),
+  quote_validity_hours: z.coerce.number().int().positive("Must be at least 1 hour").optional().default(24),
   cancel_cutoff_hours: z.coerce.number().int().min(0, "Cutoff must be non-negative"),
   pending_alert_minutes: z.coerce.number().int().positive("Alert minutes must be positive"),
 });
@@ -156,6 +156,39 @@ export const adminSpecialClosureSchema = z.object({
 });
 
 export type AdminSpecialClosureInput = z.infer<typeof adminSpecialClosureSchema>;
+
+/**
+ * Business Hour update/upsert schema
+ */
+export const adminBusinessHourSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    location_id: z.string().uuid("Invalid location ID"),
+    weekday: z
+      .number()
+      .int()
+      .min(0, "Weekday must be between 0 and 6")
+      .max(6, "Weekday must be between 0 and 6"),
+    opens: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, "Opening time must be in HH:MM format"),
+    closes: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, "Closing time must be in HH:MM format"),
+  })
+  .refine(
+    (data) => {
+      const openTime = data.opens.slice(0, 5);
+      const closeTime = data.closes.slice(0, 5);
+      return openTime < closeTime;
+    },
+    {
+      message: "Opening time must be earlier than closing time.",
+      path: ["closes"],
+    }
+  );
+
+export type AdminBusinessHourInput = z.infer<typeof adminBusinessHourSchema>;
 
 /**
  * Staff Role update schema

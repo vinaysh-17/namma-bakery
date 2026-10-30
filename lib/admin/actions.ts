@@ -12,6 +12,7 @@ import {
   adminStoreSettingsSchema,
   adminPauseStoreSchema,
   adminSpecialClosureSchema,
+  adminBusinessHourSchema,
   adminStaffRoleSchema,
   createStaffMemberSchema,
   updateStaffMemberSchema,
@@ -23,6 +24,7 @@ import {
   type AdminStoreSettingsInput,
   type AdminPauseStoreInput,
   type AdminSpecialClosureInput,
+  type AdminBusinessHourInput,
   type AdminStaffRoleInput,
   type CreateStaffMemberInput,
   type UpdateStaffMemberInput,
@@ -826,6 +828,266 @@ export async function removeSpecialClosureAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to remove closure date.",
+    };
+  }
+}
+
+export const deleteSpecialClosureAction = removeSpecialClosureAction;
+
+export async function updateSpecialClosureAction(
+  rawInput: AdminSpecialClosureInput & { id: string }
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    const parsed = adminSpecialClosureSchema.safeParse(rawInput);
+    if (!parsed.success || !rawInput.id) {
+      return {
+        success: false,
+        error: parsed.error?.issues[0]?.message ?? "Invalid closure data or ID.",
+      };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("special_closures")
+      .update({
+        closure_date: parsed.data.closure_date,
+        reason: parsed.data.reason?.trim() || "Scheduled bakery closure",
+      })
+      .eq("id", rawInput.id);
+
+    if (error) {
+      return {
+        success: false,
+        error: error.message.includes("unique") || error.code === "23505"
+          ? "A closure date already exists for this date."
+          : error.message || "Failed to update closure date.",
+      };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/checkout");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to update closure date.",
+    };
+  }
+}
+
+// ---------------------------------------------------------------- BUSINESS HOURS
+
+export async function updateBusinessHourAction(
+  rawInput: AdminBusinessHourInput
+): Promise<AdminActionResult<{ id: string }>> {
+  try {
+    await assertAdminSession();
+
+    const parsed = adminBusinessHourSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid operating hours.",
+      };
+    }
+
+    const { id, location_id, weekday, opens, closes } = parsed.data;
+    const opensFormatted = opens.length === 5 ? `${opens}:00` : opens;
+    const closesFormatted = closes.length === 5 ? `${closes}:00` : closes;
+
+    const supabase = await createClient();
+
+    if (id) {
+      const { error } = await supabase
+        .from("business_hours")
+        .update({
+          opens: opensFormatted,
+          closes: closesFormatted,
+        })
+        .eq("id", id);
+
+      if (error) {
+        return { success: false, error: error.message || "Failed to update operating hours." };
+      }
+      revalidatePath("/admin");
+      revalidatePath("/checkout");
+      return { success: true, data: { id } };
+    }
+
+    // If no ID provided (e.g. day was archived/deleted previously), check if record exists
+    const { data: existing } = await supabase
+      .from("business_hours")
+      .select("id")
+      .eq("location_id", location_id)
+      .eq("weekday", weekday)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase
+        .from("business_hours")
+        .update({
+          opens: opensFormatted,
+          closes: closesFormatted,
+        })
+        .eq("id", existing.id);
+
+      if (error) {
+        return { success: false, error: error.message || "Failed to update operating hours." };
+      }
+      revalidatePath("/admin");
+      revalidatePath("/checkout");
+      return { success: true, data: { id: existing.id } };
+    }
+
+    const { data: inserted, error } = await supabase
+      .from("business_hours")
+      .insert({
+        location_id,
+        weekday,
+        opens: opensFormatted,
+        closes: closesFormatted,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      return { success: false, error: error?.message || "Failed to save operating hours." };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/checkout");
+    return { success: true, data: { id: inserted.id } };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to update operating hours.",
+    };
+  }
+}
+
+export async function archiveBusinessHourAction(
+  hourId: string
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    if (!hourId) {
+      return { success: false, error: "Invalid business hour ID." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("business_hours")
+      .delete()
+      .eq("id", hourId);
+
+    if (error) {
+      return { success: false, error: error.message || "Failed to archive operating hours." };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/checkout");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to archive operating hours.",
+    };
+  }
+}
+
+export async function unarchiveBusinessHourAction(
+  rawInput: { location_id: string; weekday: number; opens?: string; closes?: string }
+): Promise<AdminActionResult<{ id: string }>> {
+  try {
+    await assertAdminSession();
+
+    const { location_id, weekday } = rawInput;
+    if (typeof weekday !== "number" || weekday < 0 || weekday > 6 || !location_id) {
+      return { success: false, error: "Invalid weekday or location." };
+    }
+
+    const supabase = await createClient();
+
+    // Check if an active record already exists to prevent duplicate records
+    const { data: existing } = await supabase
+      .from("business_hours")
+      .select("id, opens, closes")
+      .eq("location_id", location_id)
+      .eq("weekday", weekday)
+      .maybeSingle();
+
+    if (existing) {
+      return { success: true, data: { id: existing.id } };
+    }
+
+    // Determine opening and closing times to restore
+    let restoreOpens = rawInput.opens;
+    let restoreCloses = rawInput.closes;
+
+    if (!restoreOpens || !restoreCloses) {
+      // Look up previous record from audit_log if available
+      try {
+        const { data: auditEntries } = await supabase
+          .from("audit_log")
+          .select("old_data")
+          .eq("table_name", "business_hours")
+          .order("performed_at", { ascending: false })
+          .limit(20);
+
+        if (auditEntries) {
+          const match = auditEntries.find((entry) => {
+            const data = entry.old_data as Record<string, unknown> | null;
+            return (
+              data &&
+              data.location_id === location_id &&
+              Number(data.weekday) === weekday
+            );
+          });
+          if (match && match.old_data) {
+            const old = match.old_data as Record<string, string>;
+            if (old.opens && old.closes) {
+              restoreOpens = old.opens.slice(0, 5);
+              restoreCloses = old.closes.slice(0, 5);
+            }
+          }
+        }
+      } catch (auditErr) {
+        console.warn("[unarchiveBusinessHourAction] Could not fetch audit log:", auditErr);
+      }
+    }
+
+    const finalOpens = restoreOpens
+      ? (restoreOpens.length === 5 ? `${restoreOpens}:00` : restoreOpens)
+      : "10:00:00";
+    const finalCloses = restoreCloses
+      ? (restoreCloses.length === 5 ? `${restoreCloses}:00` : restoreCloses)
+      : "21:30:00";
+
+    const { data: inserted, error } = await supabase
+      .from("business_hours")
+      .insert({
+        location_id,
+        weekday,
+        opens: finalOpens,
+        closes: finalCloses,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      return { success: false, error: error?.message || "Failed to unarchive operating hours." };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/checkout");
+    return { success: true, data: { id: inserted.id } };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to unarchive operating hours.",
     };
   }
 }
