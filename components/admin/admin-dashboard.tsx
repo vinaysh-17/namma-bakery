@@ -14,6 +14,10 @@ import { AdminCatalogView } from "./admin-catalog-view";
 import { AdminStoreOperationsView } from "./admin-store-operations-view";
 import { AdminStaffView } from "./admin-staff-view";
 import { isStoreCurrentlyPaused } from "@/lib/utils/date";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { NotificationsProvider } from "@/components/notifications/notifications-context";
+import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
+import type { PortalNotification } from "@/lib/notifications/types";
 import type {
   AdminOverviewSummary,
   AdminCategory,
@@ -46,6 +50,8 @@ interface AdminDashboardProps {
   auditLogs: AuditLogEntry[];
   currentUserEmail?: string | null;
   currentUserId?: string | null;
+  initialNotifications?: PortalNotification[];
+  initialUnreadCount?: number;
 }
 
 function useIsStorePaused(pauseTimestamp: string | null | undefined): boolean {
@@ -86,6 +92,8 @@ export function AdminDashboard({
   auditLogs,
   currentUserEmail,
   currentUserId,
+  initialNotifications = [],
+  initialUnreadCount = 0,
 }: AdminDashboardProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = React.useState<AdminTab>("OVERVIEW");
@@ -123,37 +131,48 @@ export function AdminDashboard({
   ];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Top Header */}
-      <AdminHeader email={currentUserEmail} />
+    <NotificationsProvider
+      initialNotifications={initialNotifications}
+      initialUnreadCount={initialUnreadCount}
+    >
+      <div className="min-h-screen bg-background flex flex-col">
+        {/* Top Header */}
+        <AdminHeader email={currentUserEmail} />
 
-      {/* Main Tab Navigation */}
-      <div className="border-b border-border bg-card/60 backdrop-blur-sm sticky top-16 z-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto py-2 no-scrollbar">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
+        {/* Main Tab Navigation + Notification Bell */}
+        <div className="border-b border-border bg-card/95 backdrop-blur-sm sticky top-16 z-20">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar min-w-0">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  className={`h-9 px-3 rounded-sm text-xs font-semibold whitespace-nowrap flex items-center gap-2 transition-colors ${
-                    isActive
-                      ? "bg-caramel text-white shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
-                  }`}
-                >
-                  <Icon className="size-3.5" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id)}
+                      className={`h-9 px-3 rounded-sm text-xs font-semibold whitespace-nowrap flex items-center gap-2 transition-colors cursor-pointer shrink-0 ${
+                        isActive
+                          ? "bg-caramel text-white shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      <Icon className="size-3.5" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Notification Bell anchored to the far right */}
+              <div className="shrink-0 flex items-center">
+                <NotificationBell />
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Dashboard Body Content */}
       <div
@@ -198,6 +217,10 @@ export function AdminDashboard({
           />
         )}
       </div>
+
+      {/* Live Toasts */}
+      <NotificationToastContainer />
     </div>
+    </NotificationsProvider>
   );
 }
