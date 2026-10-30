@@ -54,7 +54,7 @@ export function AdminOverviewView({
             <button
               type="button"
               onClick={() => onNavigateTab("STORE_OPS")}
-              className="h-8 px-3 rounded-sm bg-amber-700 text-white text-xs font-semibold hover:bg-amber-800 transition-colors shrink-0"
+              className="h-8 px-3 rounded-sm bg-amber-700 text-white text-xs font-semibold hover:bg-amber-800 transition-colors shrink-0 cursor-pointer"
             >
               Manage Store Settings
             </button>
@@ -243,7 +243,7 @@ export function AdminOverviewView({
             <button
               type="button"
               onClick={() => onNavigateTab("STORE_OPS")}
-              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               Configure Store Operations
             </button>
@@ -265,7 +265,7 @@ export function AdminOverviewView({
             <button
               type="button"
               onClick={() => onNavigateTab("STAFF")}
-              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               Manage Staff Team
             </button>
