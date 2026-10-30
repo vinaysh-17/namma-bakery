@@ -54,21 +54,21 @@ export function StaffHeader({
             </form>
           </div>
 
-          {/* Right: User Badge, Admin link, Logout */}
-          <div className="flex items-center gap-2 sm:gap-4">
+          {/* Right: Account / User Badge, Admin Portal Shortcut, Sign Out */}
+          <div className="flex items-center gap-2 sm:gap-3">
 
-            {/* Role & User */}
-            <div className="hidden sm:flex items-center gap-2 rounded-sm border border-border bg-background px-2.5 py-1 text-xs">
+            {/* Account / Email + Role */}
+            <div className="hidden sm:inline-flex h-9 items-center gap-2 rounded-sm border border-border bg-background px-2.5 text-xs shrink-0">
               {role === "ADMIN" ? (
-                <ShieldCheck className="size-3.5 text-caramel" />
+                <ShieldCheck className="size-3.5 text-caramel shrink-0" />
               ) : (
-                <User className="size-3.5 text-muted-foreground" />
+                <User className="size-3.5 text-muted-foreground shrink-0" />
               )}
-              <span className="font-medium text-foreground max-w-[140px] truncate">
+              <span className="font-medium text-foreground max-w-[140px] truncate min-w-0">
                 {email || "Staff Member"}
               </span>
               <span
-                className={`rounded px-1.5 py-0.2 text-[10px] font-bold uppercase ${
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase shrink-0 ${
                   role === "ADMIN"
                     ? "bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200"
                     : "bg-muted text-muted-foreground"
@@ -82,22 +82,22 @@ export function StaffHeader({
             {role === "ADMIN" && (
               <Link
                 href="/admin"
-                className="hidden md:inline-flex items-center gap-1.5 h-8 px-2.5 rounded-sm border border-amber-300 bg-amber-50 text-amber-900 text-xs font-semibold hover:bg-amber-100 transition-colors dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+                className="hidden md:inline-flex h-9 items-center gap-1.5 px-3 rounded-sm border border-amber-300 bg-amber-50 text-amber-900 text-xs font-semibold hover:bg-amber-100 transition-colors dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200 cursor-pointer shrink-0"
                 title="Go to Admin Portal"
               >
-                <ShieldCheck className="size-3.5 text-amber-700 dark:text-amber-400" />
+                <ShieldCheck className="size-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
                 <span>Admin Portal</span>
               </Link>
             )}
 
             {/* Sign Out Form Action */}
-            <form action={staffSignOutAction}>
+            <form action={staffSignOutAction} className="inline-flex shrink-0">
               <button
                 type="submit"
                 title="Sign out of staff portal"
-                className="flex h-9 items-center gap-1.5 rounded-sm border border-border bg-background px-3 text-xs font-semibold text-foreground transition-colors hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                className="flex h-9 items-center gap-1.5 rounded-sm border border-border bg-background px-3 text-xs font-semibold text-foreground transition-colors hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive cursor-pointer shrink-0"
               >
-                <LogOut className="size-3.5" />
+                <LogOut className="size-3.5 shrink-0" />
                 <span className="hidden sm:inline">Sign Out</span>
               </button>
             </form>
