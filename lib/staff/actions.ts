@@ -67,6 +67,27 @@ export async function staffLoginAction(
           "Access denied. Only authorized bakery staff members can access the staff dashboard.",
       };
     }
+
+    // Record staff login in audit_logs
+    try {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const adminClient = createAdminClient();
+      await adminClient.from("audit_logs").insert({
+        actor_id: data.user.id,
+        actor_role: roleRow.role,
+        action: "STAFF_LOGIN",
+        entity_type: "staff_session",
+        entity_id: email,
+        after_data: {
+          email,
+          role: roleRow.role,
+          ip: clientIp,
+          logged_in_at: new Date().toISOString(),
+        },
+      });
+    } catch (auditErr) {
+      console.warn("[staffLoginAction] Failed to record login audit:", auditErr);
+    }
   } catch (err) {
     console.error("[staffLoginAction] Login error:", err);
     return { error: "An unexpected error occurred. Please try again later." };
@@ -86,6 +107,19 @@ export async function staffSignOutAction(): Promise<void> {
     console.error("[staffSignOutAction] Sign out error:", err);
   }
   redirect("/staff/login");
+}
+
+/**
+ * Signs out the current portal user (Admin or Staff) and redirects to the public bakery homepage.
+ */
+export async function portalSignOutToHomeAction(): Promise<void> {
+  try {
+    const supabase = await createClient();
+    await supabase.auth.signOut();
+  } catch (err) {
+    console.error("[portalSignOutToHomeAction] Sign out error:", err);
+  }
+  redirect("/");
 }
 
 /**

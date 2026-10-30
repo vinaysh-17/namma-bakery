@@ -309,22 +309,6 @@ export function AdminCategoriesView({
 
               <div>
                 <label className="block font-semibold text-foreground mb-1">
-                  URL Slug *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.slug}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, slug: e.target.value }))
-                  }
-                  placeholder="e.g. traditional-bakes"
-                  className="w-full h-9 px-3 rounded-sm border border-border bg-background font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-foreground mb-1">
                   Description
                 </label>
                 <textarea

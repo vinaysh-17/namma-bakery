@@ -155,63 +155,68 @@ export function StaffDashboard({
         isRefreshing={isRefreshing}
       />
 
+      {/* Section Switcher Tabs: Orders vs Custom Cakes (Sticky below StaffHeader) */}
+      <div className="sticky top-16 z-20 border-b border-border bg-card/95 backdrop-blur-sm">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => handleSelectTab("ORDERS")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 ${
+                activeTab === "ORDERS"
+                  ? "bg-cocoa text-cream"
+                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <ShoppingBag className="size-4" />
+              <span>Orders Queue</span>
+              <span
+                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  activeTab === "ORDERS"
+                    ? "bg-cream text-cocoa"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {orders.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectTab("CUSTOM_CAKES")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 relative ${
+                activeTab === "CUSTOM_CAKES"
+                  ? "bg-caramel text-white"
+                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Sparkles className="size-4" />
+              <span>Custom Cake Requests</span>
+              <span
+                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  activeTab === "CUSTOM_CAKES"
+                    ? "bg-white text-caramel"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {customCakeRequests.length}
+              </span>
+
+              {/* Notification pip if there are new unread enquiries */}
+              {hasUnreadCustomCakes && (
+                <span
+                  className="size-2 rounded-full bg-amber-500 absolute -top-1 -right-1 ring-2 ring-background"
+                  title="New custom cake request received"
+                  aria-label="New unread custom cake request"
+                />
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main Dashboard Container */}
       <div className="flex-1 mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Section Switcher Tabs: Orders vs Custom Cakes */}
-        <div className="flex items-center gap-2 border-b border-border pb-3">
-          <button
-            type="button"
-            onClick={() => handleSelectTab("ORDERS")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors ${
-              activeTab === "ORDERS"
-                ? "bg-cocoa text-cream"
-                : "border border-border bg-card text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <ShoppingBag className="size-4" />
-            <span>Orders Queue</span>
-            <span
-              className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                activeTab === "ORDERS"
-                  ? "bg-cream text-cocoa"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {orders.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSelectTab("CUSTOM_CAKES")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors relative ${
-              activeTab === "CUSTOM_CAKES"
-                ? "bg-caramel text-white"
-                : "border border-border bg-card text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Sparkles className="size-4" />
-            <span>Custom Cake Requests</span>
-            <span
-              className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                activeTab === "CUSTOM_CAKES"
-                  ? "bg-white text-caramel"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {customCakeRequests.length}
-            </span>
-
-            {/* Notification pip if there are new unread enquiries */}
-            {hasUnreadCustomCakes && (
-              <span
-                className="size-2 rounded-full bg-amber-500 absolute -top-1 -right-1 ring-2 ring-background"
-                title="New custom cake request received"
-                aria-label="New unread custom cake request"
-              />
-            )}
-          </button>
-        </div>
 
         {/* VIEW 1: REGULAR ORDERS QUEUE */}
         {activeTab === "ORDERS" && (

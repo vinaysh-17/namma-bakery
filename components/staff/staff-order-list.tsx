@@ -9,6 +9,7 @@ import {
   AlertCircle,
   ChevronRight,
   Filter,
+  X,
 } from "lucide-react";
 import type { StaffOrder, OrderFilter } from "@/lib/staff/types";
 import { formatPaise } from "@/lib/utils/money";
@@ -31,6 +32,7 @@ export function StaffOrderList({
   onSelectFilter,
 }: StaffOrderListProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const todayIst = getIstDateString();
 
@@ -115,12 +117,29 @@ export function StaffOrderList({
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <input
-            type="search"
+            ref={searchInputRef}
+            type="text"
             placeholder="Search order #, customer name, or phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full min-h-[42px] rounded-sm border border-border bg-card pl-10 pr-3.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+            className="w-full min-h-[42px] rounded-sm border border-border bg-card pl-10 pr-12 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery("");
+                searchInputRef.current?.focus();
+              }}
+              className="absolute right-0 top-0 bottom-0 w-12 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              aria-label="Clear order search"
+              title="Clear search"
+            >
+              <span className="flex size-7 items-center justify-center rounded-xs hover:bg-muted">
+                <X className="size-4" />
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Status count indicator */}
@@ -133,24 +152,26 @@ export function StaffOrderList({
       </div>
 
       {/* Filter Tabs Scrollable Row */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
-        {filterTabs.map((tab) => {
-          const isActive = activeFilter === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => onSelectFilter(tab.id)}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors ${
-                isActive
-                  ? "bg-caramel text-white"
-                  : "border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-surface"
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
+      <div className="w-full min-w-0 overflow-x-auto no-scrollbar py-0.5">
+        <div className="flex items-center gap-1.5 flex-nowrap w-max min-w-full">
+          {filterTabs.map((tab) => {
+            const isActive = activeFilter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onSelectFilter(tab.id)}
+                className={`whitespace-nowrap px-3 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors shrink-0 cursor-pointer ${
+                  isActive
+                    ? "bg-caramel text-white shadow-2xs"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-surface"
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Order Cards List */}

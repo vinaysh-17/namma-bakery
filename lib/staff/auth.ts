@@ -1,5 +1,6 @@
 import "server-only";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import type { StaffRole } from "./types";
 
@@ -20,6 +21,34 @@ export interface StaffSession {
  */
 export async function getStaffSession(): Promise<StaffSession> {
   try {
+    let cookieStore;
+    try {
+      cookieStore = await cookies();
+    } catch {
+      return {
+        user: null,
+        role: null,
+        isStaff: false,
+        isAdmin: false,
+      };
+    }
+
+    const allCookies = cookieStore.getAll();
+    const hasAuthCookie = allCookies.some(
+      (c) =>
+        (c.name.startsWith("sb-") && c.name.includes("-auth-token")) ||
+        c.name.includes("auth-token")
+    );
+
+    if (!hasAuthCookie) {
+      return {
+        user: null,
+        role: null,
+        isStaff: false,
+        isAdmin: false,
+      };
+    }
+
     const supabase = await createClient();
     const {
       data: { user },

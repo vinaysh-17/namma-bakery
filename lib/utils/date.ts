@@ -205,3 +205,18 @@ export function isWithinBakeryHours(
     minutesPastMidnight >= openMinutes && minutesPastMidnight <= closeMinutes
   );
 }
+
+/**
+ * Determines whether a store pause timestamp is currently active (in the future).
+ * Returns false if timestamp is null/undefined or in the past.
+ */
+export function isStoreCurrentlyPaused(
+  ordersPausedUntil: string | null | undefined,
+  nowMs: number = Date.now()
+): boolean {
+  if (!ordersPausedUntil) return false;
+  const parsed = new Date(ordersPausedUntil).getTime();
+  if (Number.isNaN(parsed)) return false;
+  return parsed > nowMs;
+}
+

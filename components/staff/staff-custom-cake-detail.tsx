@@ -34,6 +34,7 @@ export function StaffCustomCakeDetail({
   const [internalNoteInput, setInternalNoteInput] = React.useState("");
   const [isAddingNote, setIsAddingNote] = React.useState(false);
   const [noteError, setNoteError] = React.useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = React.useState(false);
 
   const referenceImage = request.custom_cake_images?.[0];
   const storagePath = referenceImage?.storage_path;
@@ -271,32 +272,49 @@ export function StaffCustomCakeDetail({
           </div>
         </div>
 
-        {/* Pickup Schedule */}
-        <div className="space-y-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
-            Preferred Pickup Schedule
-          </span>
-          <div className="rounded-sm border border-border bg-background p-3.5 space-y-2 text-xs">
-            <div className="flex items-start gap-2">
-              <Calendar className="size-4 text-caramel shrink-0 mt-0.5" />
-              <div>
-                <span className="text-muted-foreground block">Preferred Date:</span>
-                <span className="font-semibold text-foreground text-sm">
-                  {formatIstDate(request.preferred_pickup_at)}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-start gap-2 pt-1 border-t border-border/50">
-              <Clock className="size-4 text-caramel shrink-0 mt-0.5" />
-              <div>
-                <span className="text-muted-foreground block">Time Window:</span>
-                <span className="font-semibold text-foreground">
-                  Around {formatIstTime(request.preferred_pickup_at)}
-                </span>
-              </div>
-            </div>
+        {/* Expand Control Button (Collapsed State Only) */}
+        {!isExpanded && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setIsExpanded(true)}
+              aria-expanded={false}
+              className="w-full min-h-[48px] rounded-sm border border-border bg-card hover:bg-muted/60 hover:border-caramel/50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground hover:text-caramel transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+            >
+              <span>View More ↓</span>
+            </button>
           </div>
-        </div>
+        )}
+
+        {/* Expanded Detailed Sections */}
+        {isExpanded && (
+          <div className="space-y-6">
+            {/* Pickup Schedule */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
+                Preferred Pickup Schedule
+              </span>
+              <div className="rounded-sm border border-border bg-background p-3.5 space-y-2 text-xs">
+                <div className="flex items-start gap-2">
+                  <Calendar className="size-4 text-caramel shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-muted-foreground block">Preferred Date:</span>
+                    <span className="font-semibold text-foreground text-sm">
+                      {formatIstDate(request.preferred_pickup_at)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2 pt-1 border-t border-border/50">
+                  <Clock className="size-4 text-caramel shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-muted-foreground block">Time Window:</span>
+                    <span className="font-semibold text-foreground">
+                      Around {formatIstTime(request.preferred_pickup_at)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
         {/* Cake Specifications */}
         <div className="space-y-2">
@@ -498,6 +516,20 @@ export function StaffCustomCakeDetail({
             </form>
           </div>
         </div>
+
+        {/* Bottom Collapse Button */}
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() => setIsExpanded(false)}
+            aria-expanded={true}
+            className="w-full min-h-[48px] rounded-sm border border-border/80 bg-background hover:bg-muted/60 hover:border-caramel/50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-caramel transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+          >
+            <span>View Less ↑</span>
+          </button>
+        </div>
+      </div>
+    )}
       </div>
     </div>
   );

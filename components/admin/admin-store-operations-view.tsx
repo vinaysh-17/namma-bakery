@@ -216,7 +216,7 @@ export function AdminStoreOperationsView({
                   {isCurrentlyPaused ? "Store Paused" : "Accepting Orders"}
                 </span>
               </div>
-              {settings?.orders_paused_until && (
+              {isCurrentlyPaused && settings?.orders_paused_until && (
                 <span className="text-[11px] font-mono">
                   Paused until {formatIstDateTime(settings.orders_paused_until)}
                 </span>

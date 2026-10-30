@@ -1,7 +1,17 @@
+"use client";
+
+import { usePathname } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 
 export function DemoBanner() {
+  const pathname = usePathname();
+
   if (process.env.NEXT_PUBLIC_DEMO_MODE !== "true") {
+    return null;
+  }
+
+  // Do not show the demo preview banner above internal portal headers
+  if (pathname?.startsWith("/admin") || pathname?.startsWith("/staff")) {
     return null;
   }
 

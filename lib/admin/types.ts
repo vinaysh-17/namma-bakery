@@ -75,9 +75,13 @@ export interface StoreSettings {
   updated_at: string;
 }
 
+export type StaffOrganizationalRole = "Manager" | "Staff" | "Chef";
+
 export interface AdminStaffMember {
   user_id: string;
+  email: string | null;
   role: StaffRole;
+  organizational_role?: StaffOrganizationalRole | null;
   is_active: boolean;
   created_at: string;
   created_by: string | null;

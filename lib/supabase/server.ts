@@ -20,8 +20,12 @@ export async function createClient() {
   return createServerClient(supabaseUrl, supabasePublishableKey, {
     cookies: {
       async getAll() {
-        const cookieStore = await cookies();
-        return cookieStore.getAll();
+        try {
+          const cookieStore = await cookies();
+          return cookieStore.getAll();
+        } catch {
+          return [];
+        }
       },
       async setAll(cookiesToSet) {
         try {

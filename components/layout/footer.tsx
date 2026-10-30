@@ -10,6 +10,7 @@ export function Footer() {
   const isWidgetVisible = useRecommendationWidgetVisible();
   const [isReady, setIsReady] = useState(false);
   const pathname = usePathname();
+  const isStaffLogin = pathname === "/staff/login";
 
   useEffect(() => {
     // Enable transitions after initial mount so initial page render doesn't animate
@@ -30,10 +31,11 @@ export function Footer() {
 
   return (
     <footer className="mt-auto border-t border-border bg-card">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:py-7 sm:px-6">
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:gap-8">
+      <div className={`mx-auto max-w-6xl px-4 ${isStaffLogin ? "py-3 sm:py-4" : "py-6 sm:py-7"} sm:px-6`}>
+        {/* Main Footer Content */}
+        <div className={`flex flex-col md:flex-row md:items-start md:justify-between ${isStaffLogin ? "gap-4 md:gap-8" : "gap-6 md:gap-12"}`}>
           {/* Identity & Heritage */}
-          <div>
+          <div className="max-w-md">
             <Link
               href="/"
               onClick={handleBrandClick}
@@ -46,7 +48,7 @@ export function Footer() {
                 Namma Bakery
               </h3>
             </Link>
-            <p className="text-xs sm:text-sm leading-relaxed text-muted-foreground max-w-sm">
+            <p className="text-xs sm:text-sm leading-relaxed text-muted-foreground">
               Handcrafted cakes, fresh savoury bakes, and everyday neighbourhood favourites
               in Rajarajeshwari Nagar.
             </p>
@@ -68,51 +70,10 @@ export function Footer() {
               </div>
             </div>
           </div>
-
-          {/* Quick Links */}
-          <div>
-            <h4 className="font-heading text-xs sm:text-sm font-semibold uppercase tracking-wider text-foreground">
-              Explore
-            </h4>
-            <ul className="mt-2 space-y-1 text-xs sm:text-sm">
-              <li>
-                <Link
-                  href="/menu"
-                  className="inline-flex py-1 text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                >
-                  Bakery Menu
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/custom-cake"
-                  className="inline-flex py-1 text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                >
-                  Custom Cakes
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/orders"
-                  className="inline-flex py-1 text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                >
-                  Track Order
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/custom-cake/track"
-                  className="inline-flex py-1 text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                >
-                  Track Custom Cakes
-                </Link>
-              </li>
-            </ul>
-          </div>
         </div>
 
-        {/* Back to Top action */}
-        <div className="mt-5 flex justify-center sm:justify-end">
+        {/* Lower Right: Back to Top */}
+        <div className={`${isStaffLogin ? "mt-2 sm:mt-1" : "mt-4 sm:mt-2"} flex justify-end`}>
           <button
             type="button"
             onClick={scrollToTop}
@@ -124,7 +85,8 @@ export function Footer() {
           </button>
         </div>
 
-        <div className="mt-4 border-t border-border pt-4 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-muted-foreground">
+        {/* Footer Bottom Row: Copyright & Staff Portal */}
+        <div className={`${isStaffLogin ? "mt-3 pt-2.5" : "mt-5 pt-4"} border-t border-border flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-muted-foreground`}>
           <p>&copy; 2026 Namma Bakery. Handcrafted in Bengaluru. All rights reserved.</p>
           <div
             className={`flex items-center gap-4 ${

@@ -23,6 +23,7 @@ import {
 } from "@/lib/admin/actions";
 import { AdminVariantsModal } from "./admin-variants-modal";
 import { generateSlug, type AdminProductInput } from "@/lib/admin/validation";
+import { formatTierName } from "@/lib/menu/utils";
 
 interface AdminProductsViewProps {
   products: AdminProduct[];
@@ -529,7 +530,7 @@ export function AdminProductsView({
                   >
                     {priceTiers.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name} ({t.price_tier_rules?.length ?? 0} price rules)
+                        {formatTierName(t.name)} ({t.price_tier_rules?.length ?? 0} price rules)
                       </option>
                     ))}
                   </select>
@@ -573,22 +574,6 @@ export function AdminProductsView({
                     className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
                   />
                 </div>
-              </div>
-
-              {/* Slug */}
-              <div>
-                <label className="block font-semibold text-foreground mb-1">
-                  URL Slug *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.slug}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, slug: e.target.value }))
-                  }
-                  className="w-full h-9 px-3 rounded-sm border border-border bg-background font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
-                />
               </div>
 
               {/* Description */}

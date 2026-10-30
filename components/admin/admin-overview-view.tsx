@@ -66,7 +66,7 @@ export function AdminOverviewView({
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
         {/* Products */}
         <div
-          onClick={() => onNavigateTab("PRODUCTS")}
+          onClick={() => onNavigateTab("CATALOG")}
           className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
         >
           <div className="flex items-center justify-between">
@@ -92,7 +92,7 @@ export function AdminOverviewView({
 
         {/* Categories */}
         <div
-          onClick={() => onNavigateTab("CATEGORIES")}
+          onClick={() => onNavigateTab("CATALOG")}
           className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
         >
           <div className="flex items-center justify-between">
@@ -219,18 +219,11 @@ export function AdminOverviewView({
           <div className="flex items-center gap-2 pt-1">
             <button
               type="button"
-              onClick={() => onNavigateTab("PRODUCTS")}
-              className="h-8 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center gap-1.5"
+              onClick={() => onNavigateTab("CATALOG")}
+              className="h-8 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <PlusCircle className="size-3.5" />
               <span>Catalog Manager</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigateTab("CAKE_TIERS")}
-              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-            >
-              Cake Tiers
             </button>
           </div>
         </div>

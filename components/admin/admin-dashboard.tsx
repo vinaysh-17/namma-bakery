@@ -5,18 +5,15 @@ import { useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Package,
-  Layers,
-  FolderTree,
   Store,
   Users,
 } from "lucide-react";
 import { AdminHeader } from "./admin-header";
 import { AdminOverviewView } from "./admin-overview-view";
-import { AdminProductsView } from "./admin-products-view";
-import { AdminCakeTiersView } from "./admin-cake-tiers-view";
-import { AdminCategoriesView } from "./admin-categories-view";
+import { AdminCatalogView } from "./admin-catalog-view";
 import { AdminStoreOperationsView } from "./admin-store-operations-view";
 import { AdminStaffView } from "./admin-staff-view";
+import { isStoreCurrentlyPaused } from "@/lib/utils/date";
 import type {
   AdminOverviewSummary,
   AdminCategory,
@@ -32,9 +29,7 @@ import type {
 
 export type AdminTab =
   | "OVERVIEW"
-  | "PRODUCTS"
-  | "CAKE_TIERS"
-  | "CATEGORIES"
+  | "CATALOG"
   | "STORE_OPS"
   | "STAFF";
 
@@ -53,6 +48,31 @@ interface AdminDashboardProps {
   currentUserId?: string | null;
 }
 
+function useIsStorePaused(pauseTimestamp: string | null | undefined): boolean {
+  const subscribe = React.useCallback(
+    (notify: () => void) => {
+      if (!pauseTimestamp) return () => {};
+      const targetMs = new Date(pauseTimestamp).getTime();
+      if (Number.isNaN(targetMs)) return () => {};
+      const remainingMs = targetMs - Date.now();
+      if (remainingMs <= 0) return () => {};
+      const timer = setTimeout(notify, remainingMs);
+      return () => clearTimeout(timer);
+    },
+    [pauseTimestamp]
+  );
+
+  const getSnapshot = React.useCallback(() => {
+    return isStoreCurrentlyPaused(pauseTimestamp);
+  }, [pauseTimestamp]);
+
+  const getServerSnapshot = React.useCallback(() => {
+    return false;
+  }, []);
+
+  return React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 export function AdminDashboard({
   summary,
   categories,
@@ -69,23 +89,35 @@ export function AdminDashboard({
 }: AdminDashboardProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = React.useState<AdminTab>("OVERVIEW");
-  const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    router.refresh();
-    setTimeout(() => setIsRefreshing(false), 800);
-  };
+  // Derive live store pause state on the client from ordersPausedUntil via useSyncExternalStore
+  // Server snapshot returns false (no prerender Date.now() access); client snapshot evaluates live time
+  const pauseTimestamp = summary.ordersPausedUntil || settings?.orders_paused_until;
+  const isStorePaused = useIsStorePaused(pauseTimestamp);
+
+  const liveSummary = React.useMemo(
+    () => ({
+      ...summary,
+      isStorePaused,
+    }),
+    [summary, isStorePaused]
+  );
 
   const handleActionSuccess = () => {
     router.refresh();
   };
 
+  const handleNavigateTab = (tab: string) => {
+    if (tab === "PRODUCTS" || tab === "CATEGORIES" || tab === "CAKE_TIERS" || tab === "CATALOG") {
+      setActiveTab("CATALOG");
+    } else {
+      setActiveTab(tab as AdminTab);
+    }
+  };
+
   const navItems: { id: AdminTab; label: string; icon: React.ElementType }[] = [
     { id: "OVERVIEW", label: "Overview", icon: LayoutDashboard },
-    { id: "PRODUCTS", label: "Products", icon: Package },
-    { id: "CAKE_TIERS", label: "Cake Pricing", icon: Layers },
-    { id: "CATEGORIES", label: "Categories", icon: FolderTree },
+    { id: "CATALOG", label: "Catalog", icon: Package },
     { id: "STORE_OPS", label: "Store Operations", icon: Store },
     { id: "STAFF", label: "Staff Team", icon: Users },
   ];
@@ -93,11 +125,7 @@ export function AdminDashboard({
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Top Header */}
-      <AdminHeader
-        email={currentUserEmail}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
-      />
+      <AdminHeader email={currentUserEmail} />
 
       {/* Main Tab Navigation */}
       <div className="border-b border-border bg-card/60 backdrop-blur-sm sticky top-16 z-20">
@@ -128,34 +156,24 @@ export function AdminDashboard({
       </div>
 
       {/* Dashboard Body Content */}
-      <div className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-6">
+      <div
+        className={`flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 ${
+          activeTab === "CATALOG" ? "pt-0 pb-6" : "py-6"
+        }`}
+      >
         {activeTab === "OVERVIEW" && (
           <AdminOverviewView
-            summary={summary}
+            summary={liveSummary}
             auditLogs={auditLogs}
-            onNavigateTab={(tab) => setActiveTab(tab as AdminTab)}
+            onNavigateTab={handleNavigateTab}
           />
         )}
 
-        {activeTab === "PRODUCTS" && (
-          <AdminProductsView
+        {activeTab === "CATALOG" && (
+          <AdminCatalogView
+            categories={categories}
             products={products}
-            categories={categories}
             priceTiers={priceTiers}
-            onActionSuccess={handleActionSuccess}
-          />
-        )}
-
-        {activeTab === "CAKE_TIERS" && (
-          <AdminCakeTiersView
-            tiers={priceTiers}
-            onActionSuccess={handleActionSuccess}
-          />
-        )}
-
-        {activeTab === "CATEGORIES" && (
-          <AdminCategoriesView
-            categories={categories}
             onActionSuccess={handleActionSuccess}
           />
         )}
@@ -166,7 +184,7 @@ export function AdminDashboard({
             settings={settings}
             closures={closures}
             hours={hours}
-            isStorePaused={summary.isStorePaused}
+            isStorePaused={isStorePaused}
             onActionSuccess={handleActionSuccess}
           />
         )}

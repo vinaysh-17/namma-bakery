@@ -114,6 +114,32 @@ export function formatCakeFinish(finish: CakeFinish): string {
   }
 }
 
+/**
+ * Formats a cake price tier identifier into an understandable, human-friendly label.
+ *
+ * Examples:
+ *   formatTierName("T1") -> "Tier 1"
+ *   formatTierName("T6") -> "Tier 6"
+ *   formatTierName("SPECIAL_RED_VELVET") -> "Special: Red Velvet"
+ *   formatTierName("SPECIAL_RAINBOW") -> "Special: Rainbow"
+ */
+export function formatTierName(name: string): string {
+  if (!name) return "";
+  const tierMatch = name.match(/^T(\d+)$/i);
+  if (tierMatch) {
+    return `Tier ${tierMatch[1]}`;
+  }
+  if (name.startsWith("SPECIAL_")) {
+    const descriptive = name
+      .replace(/^SPECIAL_/, "")
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+    return `Special: ${descriptive}`;
+  }
+  return name;
+}
+
 export interface OrderabilityInfo {
   status:
     | "available"

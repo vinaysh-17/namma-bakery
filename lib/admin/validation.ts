@@ -16,7 +16,7 @@ export function generateSlug(text: string): string {
  * Category validation schema
  */
 export const adminCategorySchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().uuid().optional().or(z.literal("")),
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(80, "Name cannot exceed 80 characters"),
   name_kn: z.string().trim().max(100).nullable().optional(),
   slug: z
@@ -167,3 +167,61 @@ export const adminStaffRoleSchema = z.object({
 });
 
 export type AdminStaffRoleInput = z.infer<typeof adminStaffRoleSchema>;
+
+/**
+ * Add Staff Member schema
+ */
+export const createStaffMemberSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name cannot exceed 100 characters"),
+  email: z
+    .string()
+    .trim()
+    .email("Please provide a valid email address")
+    .toLowerCase(),
+  password: z
+    .string()
+    .min(6, "Password must be at least 6 characters"),
+  phone: z.string().trim().max(20, "Phone number is too long").nullable().optional(),
+  role: z.enum(["Manager", "Staff", "Chef"]).nullable().optional(),
+});
+
+export type CreateStaffMemberInput = z.infer<typeof createStaffMemberSchema>;
+
+/**
+ * Edit Staff Member schema
+ */
+export const updateStaffMemberSchema = z.object({
+  user_id: z.string().uuid("Invalid staff user ID"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name cannot exceed 100 characters"),
+  email: z
+    .string()
+    .trim()
+    .email("Please provide a valid email address")
+    .toLowerCase(),
+  phone: z.string().trim().max(20, "Phone number is too long").nullable().optional(),
+  role: z.enum(["Manager", "Staff", "Chef"]).nullable().optional(),
+  password: z
+    .string()
+    .min(6, "Password must be at least 6 characters")
+    .optional()
+    .or(z.literal("")),
+});
+
+export type UpdateStaffMemberInput = z.infer<typeof updateStaffMemberSchema>;
+
+/**
+ * Remove Staff Member schema
+ */
+export const removeStaffMemberSchema = z.object({
+  user_id: z.string().uuid("Invalid staff user ID"),
+});
+
+export type RemoveStaffMemberInput = z.infer<typeof removeStaffMemberSchema>;

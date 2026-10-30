@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { assertAdminSession } from "./auth";
 import {
   adminCategorySchema,
@@ -12,6 +13,9 @@ import {
   adminPauseStoreSchema,
   adminSpecialClosureSchema,
   adminStaffRoleSchema,
+  createStaffMemberSchema,
+  updateStaffMemberSchema,
+  removeStaffMemberSchema,
   type AdminCategoryInput,
   type AdminProductInput,
   type AdminVariantInput,
@@ -20,6 +24,9 @@ import {
   type AdminPauseStoreInput,
   type AdminSpecialClosureInput,
   type AdminStaffRoleInput,
+  type CreateStaffMemberInput,
+  type UpdateStaffMemberInput,
+  type RemoveStaffMemberInput,
 } from "./validation";
 
 export interface AdminActionResult<T = unknown> {
@@ -47,7 +54,7 @@ export async function upsertCategoryAction(
     const { id, ...data } = parsed.data;
     const supabase = await createClient();
 
-    if (id) {
+    if (id && id.trim().length > 0) {
       const { error } = await supabase
         .from("categories")
         .update({
@@ -62,6 +69,12 @@ export async function upsertCategoryAction(
         .eq("id", id);
 
       if (error) {
+        if (error.code === "23505") {
+          return {
+            success: false,
+            error: `A category with the URL slug "${data.slug}" already exists.`,
+          };
+        }
         return { success: false, error: error.message };
       }
       revalidatePath("/admin");
@@ -83,6 +96,12 @@ export async function upsertCategoryAction(
         .single();
 
       if (error || !inserted) {
+        if (error?.code === "23505") {
+          return {
+            success: false,
+            error: `A category with the URL slug "${data.slug}" already exists.`,
+          };
+        }
         return { success: false, error: error?.message || "Failed to create category." };
       }
       revalidatePath("/admin");
@@ -150,6 +169,56 @@ export async function archiveCategoryAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to update category archive status.",
+    };
+  }
+}
+
+export async function deleteCategoryAction(
+  categoryId: string
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    if (!categoryId || typeof categoryId !== "string" || categoryId.trim().length === 0) {
+      return { success: false, error: "Invalid category ID." };
+    }
+
+    const supabase = await createClient();
+
+    // Verify whether this category contains any products (active or archived)
+    const { count: productCount, error: countError } = await supabase
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("category_id", categoryId);
+
+    if (countError) {
+      return { success: false, error: countError.message };
+    }
+
+    if (productCount && productCount > 0) {
+      return {
+        success: false,
+        error: `This category contains ${productCount} product(s). Remove or reassign those products before deleting the category.`,
+      };
+    }
+
+    // Safe deletion: category has 0 products
+    const { error: deleteError } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", categoryId);
+
+    if (deleteError) {
+      return { success: false, error: deleteError.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/menu");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete category.",
     };
   }
 }
@@ -284,6 +353,56 @@ export async function archiveProductAction(
   }
 }
 
+export async function deleteProductAction(
+  productId: string
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    if (!productId || typeof productId !== "string" || productId.trim().length === 0) {
+      return { success: false, error: "Invalid product ID." };
+    }
+
+    const supabase = await createClient();
+
+    // Check if product is referenced in existing customer orders
+    const { count: orderItemCount, error: countError } = await supabase
+      .from("order_items")
+      .select("id", { count: "exact", head: true })
+      .eq("product_id", productId);
+
+    if (countError) {
+      return { success: false, error: countError.message };
+    }
+
+    if (orderItemCount && orderItemCount > 0) {
+      return {
+        success: false,
+        error: `Cannot permanently delete this product because it is referenced in ${orderItemCount} historical order(s). Please archive it instead to keep customer order records intact.`,
+      };
+    }
+
+    // Safely delete product (product_variants and product_images cascade automatically)
+    const { error: deleteError } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", productId);
+
+    if (deleteError) {
+      return { success: false, error: deleteError.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/menu");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete product.",
+    };
+  }
+}
+
 // ---------------------------------------------------------------- VARIANTS
 
 export async function upsertVariantAction(
@@ -404,6 +523,50 @@ export async function archiveVariantAction(
   }
 }
 
+export async function deleteVariantAction(
+  variantId: string
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+    const supabase = await createClient();
+
+    // Check if variant is referenced in historical customer orders
+    const { count: orderItemCount, error: countError } = await supabase
+      .from("order_items")
+      .select("id", { count: "exact", head: true })
+      .eq("variant_id", variantId);
+
+    if (countError) {
+      return { success: false, error: countError.message };
+    }
+
+    if (orderItemCount && orderItemCount > 0) {
+      return {
+        success: false,
+        error: `Cannot permanently delete this variant because it is referenced in ${orderItemCount} historical order(s). Please archive it instead to keep customer order records intact.`,
+      };
+    }
+
+    const { error: deleteError } = await supabase
+      .from("product_variants")
+      .delete()
+      .eq("id", variantId);
+
+    if (deleteError) {
+      return { success: false, error: deleteError.message };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/menu");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete variant.",
+    };
+  }
+}
+
 // ---------------------------------------------------------------- CAKE TIER RULES
 
 export async function upsertPriceTierRuleAction(
@@ -427,13 +590,25 @@ export async function upsertPriceTierRuleAction(
       const { error } = await supabase
         .from("price_tier_rules")
         .update({
+          weight_grams: data.weight_grams,
+          egg_type: data.egg_type,
+          finish: data.finish,
           price_paise: data.price_paise,
           is_active: data.is_active,
           note: data.note || null,
         })
         .eq("id", id);
 
-      if (error) return { success: false, error: error.message };
+      if (error) {
+        if (error.code === "23505") {
+          return {
+            success: false,
+            error:
+              "A pricing rule with this weight, dietary type, and finish already exists in this tier.",
+          };
+        }
+        return { success: false, error: error.message };
+      }
       revalidatePath("/admin");
       revalidatePath("/menu");
       return { success: true, data: { id } };
@@ -453,6 +628,13 @@ export async function upsertPriceTierRuleAction(
         .single();
 
       if (error || !inserted) {
+        if (error?.code === "23505") {
+          return {
+            success: false,
+            error:
+              "A pricing rule with this weight, dietary type, and finish already exists in this tier.",
+          };
+        }
         return { success: false, error: error?.message || "Failed to add price rule." };
       }
       revalidatePath("/admin");
@@ -703,6 +885,224 @@ export async function updateStaffRoleAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to update staff role.",
+    };
+  }
+}
+
+export async function createStaffMemberAction(
+  rawInput: CreateStaffMemberInput
+): Promise<AdminActionResult<{ user_id: string }>> {
+  try {
+    const session = await assertAdminSession();
+
+    const parsed = createStaffMemberSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid staff member data.",
+      };
+    }
+
+    const { name, email, password, phone, role } = parsed.data;
+    const adminClient = createAdminClient();
+
+    // 1. Create authenticated user in Supabase Auth with email_confirm: true
+    const { data: authData, error: authError } =
+      await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: name,
+          phone: phone || null,
+          staff_role: role || null,
+        },
+      });
+
+    if (authError || !authData.user) {
+      console.error("[createStaffMemberAction] Auth createUser error:", authError);
+      return {
+        success: false,
+        error: authError?.message || "Unable to add staff member. Please try again.",
+      };
+    }
+
+    const newUserId = authData.user.id;
+
+    // 2. Insert staff_roles entry using the authenticated Admin client
+    const supabase = await createClient();
+    const { error: roleError } = await supabase.from("staff_roles").insert({
+      user_id: newUserId,
+      role: "EMPLOYEE",
+      is_active: true,
+      created_by: session.user?.id || null,
+    });
+
+    if (roleError) {
+      console.error("[createStaffMemberAction] staff_roles insert error:", roleError);
+      // Clean up the created auth user so an orphaned account is not left behind
+      try {
+        await adminClient.auth.admin.deleteUser(newUserId);
+      } catch (cleanupErr) {
+        console.error("[createStaffMemberAction] Cleanup auth user error:", cleanupErr);
+      }
+
+      return {
+        success: false,
+        error: "Unable to add staff member. Please try again.",
+      };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/staff");
+    return { success: true, data: { user_id: newUserId } };
+  } catch (err) {
+    console.error("[createStaffMemberAction] Unexpected error:", err);
+    return {
+      success: false,
+      error: "Unable to add staff member. Please try again.",
+    };
+  }
+}
+
+export async function updateStaffMemberAction(
+  rawInput: UpdateStaffMemberInput
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    const parsed = updateStaffMemberSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid staff member data.",
+      };
+    }
+
+    const { user_id, name, email, phone, role, password } = parsed.data;
+    const adminClient = createAdminClient();
+
+    // 1. Update auth attributes and user metadata
+    const updateAttrs: {
+      email?: string;
+      password?: string;
+      user_metadata: Record<string, unknown>;
+    } = {
+      email,
+      user_metadata: {
+        full_name: name,
+        phone: phone || null,
+        staff_role: role || null,
+      },
+    };
+
+    if (password && password.trim().length >= 6) {
+      updateAttrs.password = password.trim();
+    }
+
+    const { error: authError } = await adminClient.auth.admin.updateUserById(
+      user_id,
+      updateAttrs
+    );
+
+    if (authError) {
+      console.error("[updateStaffMemberAction] Auth updateUserById error:", authError);
+      return {
+        success: false,
+        error: "Unable to update staff member. Please try again.",
+      };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/staff");
+    return { success: true };
+  } catch (err) {
+    console.error("[updateStaffMemberAction] Unexpected error:", err);
+    return {
+      success: false,
+      error: "Unable to update staff member. Please try again.",
+    };
+  }
+}
+
+export async function removeStaffMemberAction(
+  rawInput: RemoveStaffMemberInput
+): Promise<AdminActionResult> {
+  try {
+    const session = await assertAdminSession();
+
+    const parsed = removeStaffMemberSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid staff member ID.",
+      };
+    }
+
+    const { user_id } = parsed.data;
+
+    // Self-removal safeguard
+    if (session.user?.id === user_id) {
+      return {
+        success: false,
+        error: "You cannot remove your own administrator account.",
+      };
+    }
+
+    const supabase = await createClient();
+
+    // Safeguard: check if target is an admin and the last active admin
+    const { data: targetRole, error: fetchError } = await supabase
+      .from("staff_roles")
+      .select("role, is_active")
+      .eq("user_id", user_id)
+      .maybeSingle();
+
+    if (fetchError || !targetRole) {
+      console.error("[removeStaffMemberAction] Fetch target role error:", fetchError);
+      return {
+        success: false,
+        error: "Staff member not found or already removed.",
+      };
+    }
+
+    if (targetRole.role === "ADMIN") {
+      const { count } = await supabase
+        .from("staff_roles")
+        .select("*", { count: "exact", head: true })
+        .eq("role", "ADMIN")
+        .eq("is_active", true);
+
+      if ((count ?? 0) <= 1) {
+        return {
+          success: false,
+          error: "Safety lock: You cannot remove the only active administrator account.",
+        };
+      }
+    }
+
+    // Soft deactivation preserves all historical orders and transactions
+    const { error: updateError } = await supabase
+      .from("staff_roles")
+      .update({ is_active: false })
+      .eq("user_id", user_id);
+
+    if (updateError) {
+      console.error("[removeStaffMemberAction] Deactivation error:", updateError);
+      return {
+        success: false,
+        error: "Unable to remove staff member. Please try again.",
+      };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/staff");
+    return { success: true };
+  } catch (err) {
+    console.error("[removeStaffMemberAction] Unexpected error:", err);
+    return {
+      success: false,
+      error: "Unable to remove staff member. Please try again.",
     };
   }
 }

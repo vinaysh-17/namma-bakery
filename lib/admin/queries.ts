@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_LOCATION_SLUG } from "@/lib/pickup/queries";
 import type {
   AdminOverviewSummary,
@@ -100,10 +101,9 @@ export async function getAdminOverviewSummary(): Promise<{
       ? rawSettings[0]
       : rawSettings;
 
-    const isStorePaused = Boolean(
-      settings?.orders_paused_until &&
-        new Date(settings.orders_paused_until).getTime() > Date.now()
-    );
+    // Live store pause evaluation is performed by client components from ordersPausedUntil
+    // to prevent Next.js prerender unstable Date.now() warnings while preserving exact future vs expired semantics.
+    const isStorePaused = false;
 
     return {
       summary: {
@@ -289,7 +289,7 @@ export async function getAdminStoreSettings(): Promise<{
 }
 
 /**
- * Fetches all staff members and their profile information.
+ * Fetches all active staff members with their profile and authentication information.
  */
 export async function getAdminStaffMembers(): Promise<{
   staff: AdminStaffMember[];
@@ -301,22 +301,57 @@ export async function getAdminStaffMembers(): Promise<{
     const { data, error } = await supabase
       .from("staff_roles")
       .select("*, profile:profiles(full_name, phone)")
+      .eq("is_active", true)
       .order("created_at", { ascending: true });
 
     if (error) {
       return { staff: [], error: error.message };
     }
 
+    // Retrieve emails and user metadata using admin client
+    let authMap = new Map<
+      string,
+      { email?: string; metadata?: Record<string, unknown> }
+    >();
+    try {
+      const adminClient = createAdminClient();
+      const { data: authData } = await adminClient.auth.admin.listUsers({
+        page: 1,
+        perPage: 200,
+      });
+      if (authData?.users) {
+        authMap = new Map(
+          authData.users.map((u) => [
+            u.id,
+            { email: u.email, metadata: u.user_metadata },
+          ])
+        );
+      }
+    } catch (e) {
+      console.warn("[getAdminStaffMembers] Could not fetch auth users list:", e);
+    }
+
     const formatted: AdminStaffMember[] = (data ?? []).map((row) => {
       const prof = row.profile as { full_name?: string; phone?: string } | null;
+      const authInfo = authMap.get(row.user_id);
+      const orgRole = authInfo?.metadata?.staff_role as
+        | "Manager"
+        | "Staff"
+        | "Chef"
+        | null
+        | undefined;
+
       return {
         user_id: row.user_id,
+        email: authInfo?.email ?? null,
         role: row.role,
+        organizational_role: orgRole || null,
         is_active: row.is_active,
         created_at: row.created_at,
         created_by: row.created_by,
-        full_name: prof?.full_name ?? null,
-        phone: prof?.phone ?? null,
+        full_name:
+          prof?.full_name || (authInfo?.metadata?.full_name as string) || null,
+        phone: prof?.phone || (authInfo?.metadata?.phone as string) || null,
       };
     });
 

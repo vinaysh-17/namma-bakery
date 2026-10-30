@@ -23,7 +23,7 @@ export default async function StaffLoginPage() {
   }
 
   return (
-    <div className="min-h-[85vh] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-background">
+    <div className="min-h-[calc(100dvh-16rem)] flex flex-col items-center justify-center py-4 sm:py-6 px-4 sm:px-6 lg:px-8 bg-background">
       <StaffLoginForm />
     </div>
   );

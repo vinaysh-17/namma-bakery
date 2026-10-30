@@ -131,6 +131,12 @@ export function Header() {
 
   const displayCount = isHydrated ? itemCount : 0;
 
+  // Completely hide public website header on internal portals
+  const isPortalRoute = pathname?.startsWith("/admin") || pathname?.startsWith("/staff");
+  if (isPortalRoute) {
+    return null;
+  }
+
   return (
     <header
       className={cn(
