@@ -37,7 +37,6 @@ import {
   type AdminProductInput,
   type AdminCategoryInput,
 } from "@/lib/admin/validation";
-import { formatTierName } from "@/lib/menu/utils";
 
 interface AdminCatalogViewProps {
   categories: AdminCategory[];
@@ -449,6 +448,10 @@ export function AdminCatalogView({
     const submissionData = {
       ...productFormData,
       slug: finalSlug,
+      price_tier_id:
+        productFormData.kind === "TIERED_CAKE"
+          ? productFormData.price_tier_id || priceTiers[0]?.id || null
+          : null,
     };
 
     const res = await upsertProductAction(submissionData);
@@ -607,7 +610,7 @@ export function AdminCatalogView({
             })}
           </div>
 
-          {/* Category Actions (right): Add Category & Add Product */}
+          {/* Category Actions (right): Add Category */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -616,14 +619,6 @@ export function AdminCatalogView({
             >
               <Plus className="size-3.5" />
               <span>Add Category</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenCreateProduct}
-              className="h-9 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
-            >
-              <Plus className="size-3.5" />
-              <span>Add Product</span>
             </button>
           </div>
         </div>
@@ -1243,43 +1238,6 @@ export function AdminCatalogView({
                   </select>
                 </div>
               </div>
-
-              {/* Price Tier Selection for TIERED_CAKE */}
-              {productFormData.kind === "TIERED_CAKE" && (
-                <div className="p-3 rounded-sm bg-muted/40 border border-border space-y-1.5">
-                  <label className="block font-semibold text-foreground">
-                    Cake Pricing Group *
-                  </label>
-                  <select
-                    value={productFormData.price_tier_id || ""}
-                    onChange={(e) =>
-                      setProductFormData((prev) => ({
-                        ...prev,
-                        price_tier_id: e.target.value || null,
-                      }))
-                    }
-                    className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
-                  >
-                    {priceTiers.map((t) => {
-                      const matchingCakes = products
-                        .filter((p) => p.price_tier_id === t.id && p.id !== editingProduct?.id)
-                        .map((p) => p.name);
-                      const sample = matchingCakes.slice(0, 3).join(", ");
-                      const label = sample
-                        ? `${formatTierName(t.name)} — e.g. ${sample}`
-                        : formatTierName(t.name);
-                      return (
-                        <option key={t.id} value={t.id}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    Cakes in the same pricing group share multi-weight prices (0.5kg to 5kg) and finishes. You can fine-tune rules anytime under Manage Pricing.
-                  </p>
-                </div>
-              )}
 
               {/* Names */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
