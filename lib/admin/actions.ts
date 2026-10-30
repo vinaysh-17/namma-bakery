@@ -938,6 +938,14 @@ export async function createStaffMemberAction(
       created_by: session.user?.id || null,
     });
 
+    if (phone) {
+      try {
+        await supabase.from("profiles").update({ phone }).eq("id", newUserId);
+      } catch (profileErr) {
+        console.warn("[createStaffMemberAction] Could not sync phone to profile:", profileErr);
+      }
+    }
+
     if (roleError) {
       console.error("[createStaffMemberAction] staff_roles insert error:", roleError);
       // Clean up the created auth user so an orphaned account is not left behind
@@ -1011,6 +1019,20 @@ export async function updateStaffMemberAction(
         success: false,
         error: "Unable to update staff member. Please try again.",
       };
+    }
+
+    // 2. Also update profiles table so database mirrors auth metadata
+    try {
+      const supabase = await createClient();
+      await supabase
+        .from("profiles")
+        .update({
+          full_name: name,
+          phone: phone || null,
+        })
+        .eq("id", user_id);
+    } catch (profileErr) {
+      console.warn("[updateStaffMemberAction] Could not sync to profile:", profileErr);
     }
 
     revalidatePath("/admin");
@@ -1106,3 +1128,5 @@ export async function removeStaffMemberAction(
     };
   }
 }
+
+export const deleteStaffMemberAction = removeStaffMemberAction;

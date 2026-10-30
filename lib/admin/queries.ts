@@ -300,12 +300,36 @@ export async function getAdminStaffMembers(): Promise<{
 
     const { data, error } = await supabase
       .from("staff_roles")
-      .select("*, profile:profiles(full_name, phone)")
+      .select("*")
       .eq("is_active", true)
       .order("created_at", { ascending: true });
 
     if (error) {
+      console.error("[getAdminStaffMembers] Query staff_roles error:", error);
       return { staff: [], error: error.message };
+    }
+
+    // Retrieve profiles for phone and full_name without unsupported cross-table join
+    const userIds = (data ?? []).map((row) => row.user_id);
+    let profileMap = new Map<
+      string,
+      { full_name?: string | null; phone?: string | null }
+    >();
+
+    if (userIds.length > 0) {
+      const { data: profilesData, error: profileErr } = await supabase
+        .from("profiles")
+        .select("id, full_name, phone")
+        .in("id", userIds);
+
+      if (!profileErr && profilesData) {
+        profileMap = new Map(
+          profilesData.map((p) => [
+            p.id,
+            { full_name: p.full_name, phone: p.phone },
+          ])
+        );
+      }
     }
 
     // Retrieve emails and user metadata using admin client
@@ -332,7 +356,7 @@ export async function getAdminStaffMembers(): Promise<{
     }
 
     const formatted: AdminStaffMember[] = (data ?? []).map((row) => {
-      const prof = row.profile as { full_name?: string; phone?: string } | null;
+      const prof = profileMap.get(row.user_id);
       const authInfo = authMap.get(row.user_id);
       const orgRole = authInfo?.metadata?.staff_role as
         | "Manager"

@@ -20,7 +20,7 @@ import type { AdminStaffMember, StaffOrganizationalRole } from "@/lib/admin/type
 import {
   createStaffMemberAction,
   updateStaffMemberAction,
-  removeStaffMemberAction,
+  deleteStaffMemberAction,
 } from "@/lib/admin/actions";
 
 interface AdminStaffViewProps {
@@ -39,7 +39,7 @@ export function AdminStaffView({
   // Modal states
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editingStaff, setEditingStaff] = React.useState<AdminStaffMember | null>(null);
-  const [removingStaff, setRemovingStaff] = React.useState<AdminStaffMember | null>(null);
+  const [deletingStaff, setDeletingStaff] = React.useState<AdminStaffMember | null>(null);
 
   // Form states - Add
   const [addName, setAddName] = React.useState("");
@@ -83,15 +83,15 @@ export function AdminStaffView({
     setErrorMessage(null);
   };
 
-  const handleOpenRemove = (member: AdminStaffMember) => {
-    setRemovingStaff(member);
+  const handleOpenDelete = (member: AdminStaffMember) => {
+    setDeletingStaff(member);
     setErrorMessage(null);
   };
 
   const handleCloseModals = () => {
     setIsAddOpen(false);
     setEditingStaff(null);
-    setRemovingStaff(null);
+    setDeletingStaff(null);
     setErrorMessage(null);
   };
 
@@ -171,24 +171,24 @@ export function AdminStaffView({
     onActionSuccess();
   };
 
-  // Submit Remove
-  const handleRemoveSubmit = async () => {
-    if (!removingStaff) return;
+  // Submit Delete
+  const handleDeleteSubmit = async () => {
+    if (!deletingStaff) return;
     setErrorMessage(null);
 
-    if (removingStaff.user_id === currentUserId) {
-      setErrorMessage("You cannot remove your own administrator account.");
+    if (deletingStaff.user_id === currentUserId) {
+      setErrorMessage("You cannot delete your own administrator account.");
       return;
     }
 
     setIsSubmitting(true);
-    const res = await removeStaffMemberAction({
-      user_id: removingStaff.user_id,
+    const res = await deleteStaffMemberAction({
+      user_id: deletingStaff.user_id,
     });
     setIsSubmitting(false);
 
     if (!res.success) {
-      setErrorMessage(res.error || "Unable to remove staff member. Please try again.");
+      setErrorMessage(res.error || "Unable to delete staff member. Please try again.");
       return;
     }
 
@@ -325,12 +325,12 @@ export function AdminStaffView({
                           {!isSelf && (
                             <button
                               type="button"
-                              onClick={() => handleOpenRemove(member)}
+                              onClick={() => handleOpenDelete(member)}
                               className="h-7 px-2.5 rounded border border-destructive/30 bg-background text-xs font-semibold text-destructive hover:bg-destructive hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
-                              title={`Remove ${member.full_name || "staff member"}`}
+                              title={`Delete ${member.full_name || "staff member"}`}
                             >
                               <Trash2 className="size-3" />
-                              <span>Remove</span>
+                              <span>Delete</span>
                             </button>
                           )}
                         </div>
@@ -347,7 +347,7 @@ export function AdminStaffView({
       {/* Add Staff Modal */}
       {isAddOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="relative w-full max-w-md rounded-sm border border-border bg-card p-6 shadow-xl space-y-4">
+          <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-sm border border-border bg-card p-5 sm:p-6 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div>
                 <h3 className="font-heading font-bold text-base text-foreground">
@@ -491,7 +491,7 @@ export function AdminStaffView({
       {/* Edit Staff Modal */}
       {editingStaff && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="relative w-full max-w-md rounded-sm border border-border bg-card p-6 shadow-xl space-y-4">
+          <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-sm border border-border bg-card p-5 sm:p-6 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div>
                 <h3 className="font-heading font-bold text-base text-foreground">
@@ -628,27 +628,33 @@ export function AdminStaffView({
         </div>
       )}
 
-      {/* Remove Staff Confirmation Modal */}
-      {removingStaff && (
+      {/* Delete Staff Confirmation Modal */}
+      {deletingStaff && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="relative w-full max-w-md rounded-sm border border-border bg-card p-6 shadow-xl space-y-4">
+          <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-sm border border-border bg-card p-5 sm:p-6 shadow-xl space-y-4">
             <div className="flex items-start gap-3">
               <div className="size-9 rounded-full bg-destructive/10 text-destructive flex items-center justify-center shrink-0">
                 <AlertTriangle className="size-5" />
               </div>
               <div className="flex-1">
                 <h3 className="font-heading font-bold text-base text-foreground">
-                  Remove Staff Member?
+                  Delete Staff Member
                 </h3>
                 <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                  Are you sure you want to remove{" "}
+                  Are you sure you want to permanently delete and deactivate the staff account for{" "}
                   <strong className="text-foreground">
-                    {removingStaff.full_name || removingStaff.email || "this staff member"}
-                  </strong>{" "}
-                  from the Staff Team?
+                    {deletingStaff.full_name || "this staff member"}
+                  </strong>
+                  ?
                 </p>
-                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                  They will no longer be able to access the Staff Portal.
+                {deletingStaff.email && (
+                  <div className="mt-1.5 text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
+                    <Mail className="size-3 text-muted-foreground shrink-0" />
+                    <span>{deletingStaff.email}</span>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                  This will deactivate their access to the Staff Portal. Historical order records and kitchen logs will be safely preserved.
                 </p>
               </div>
             </div>
@@ -671,12 +677,12 @@ export function AdminStaffView({
               </button>
               <button
                 type="button"
-                onClick={handleRemoveSubmit}
-                disabled={isSubmitting || removingStaff.user_id === currentUserId}
+                onClick={handleDeleteSubmit}
+                disabled={isSubmitting || deletingStaff.user_id === currentUserId}
                 className="h-9 px-4 rounded-sm bg-destructive text-white font-semibold hover:bg-destructive/90 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting && <RotateCcw className="size-3.5 animate-spin" />}
-                <span>Remove Staff</span>
+                <span>Delete Staff Member</span>
               </button>
             </div>
           </div>
