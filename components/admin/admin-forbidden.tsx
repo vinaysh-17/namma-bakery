@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ShieldAlert, ArrowLeft, LogOut, LayoutDashboard } from "lucide-react";
 import { staffSignOutAction } from "@/lib/staff/actions";
 import type { StaffRole } from "@/lib/staff/types";
+import { maskUserEmail } from "@/lib/utils/mask";
 
 interface AdminForbiddenProps {
   userEmail?: string | null;
@@ -27,7 +28,7 @@ export function AdminForbidden({ userEmail, role }: AdminForbiddenProps) {
         </div>
 
         <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-          Your account <strong className="text-foreground">{userEmail || "staff user"}</strong> has{" "}
+          Your account <strong className="text-foreground">{userEmail ? maskUserEmail(userEmail) : "staff user"}</strong> has{" "}
           <span className="font-semibold text-foreground uppercase">{role || "EMPLOYEE"}</span> privileges.
           Only active bakery administrators can access the store configuration and catalog administration portal.
         </p>

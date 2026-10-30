@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
 } from "lucide-react";
 import { staffSignOutAction, portalSignOutToHomeAction } from "@/lib/staff/actions";
+import { maskUserEmail } from "@/lib/utils/mask";
 
 interface AdminHeaderProps {
   email?: string | null;
@@ -49,7 +50,7 @@ export function AdminHeader({
             <div className="hidden sm:inline-flex h-9 items-center gap-2 rounded-sm border border-amber-300 bg-amber-50/60 px-2.5 text-xs dark:border-amber-800 dark:bg-amber-950/40 shrink-0">
               <ShieldAlert className="size-3.5 text-amber-800 dark:text-amber-400 shrink-0" />
               <span className="font-medium text-amber-950 dark:text-amber-200 max-w-[140px] truncate min-w-0">
-                {email || "Administrator"}
+                {email ? maskUserEmail(email) : "Administrator"}
               </span>
               <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase border border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200 shrink-0">
                 ADMIN
@@ -59,10 +60,10 @@ export function AdminHeader({
             {/* Quick jump to Staff Portal */}
             <Link
               href="/staff"
-              className="hidden md:inline-flex h-9 items-center gap-1.5 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer shrink-0"
+              className="hidden md:inline-flex h-9 items-center gap-1.5 px-3 rounded-sm border border-amber-300 bg-amber-50 text-amber-900 text-xs font-semibold hover:bg-amber-100 transition-colors dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200 cursor-pointer shrink-0"
               title="Go to Staff Portal"
             >
-              <LayoutDashboard className="size-3.5 text-caramel shrink-0" />
+              <LayoutDashboard className="size-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
               <span>Staff Portal</span>
             </Link>
 

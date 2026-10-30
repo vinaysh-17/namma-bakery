@@ -32,7 +32,6 @@ interface AdminStaffViewProps {
 
 export function AdminStaffView({
   staff,
-  currentUserEmail,
   currentUserId,
   onActionSuccess,
 }: AdminStaffViewProps) {
@@ -209,11 +208,6 @@ export function AdminStaffView({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {currentUserEmail && (
-            <span className="hidden sm:inline text-xs text-muted-foreground">
-              Logged in as: <strong className="text-foreground">{currentUserEmail}</strong>
-            </span>
-          )}
           <button
             type="button"
             onClick={handleOpenAdd}

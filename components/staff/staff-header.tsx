@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { StaffRole } from "@/lib/staff/types";
 import { staffSignOutAction, portalSignOutToHomeAction } from "@/lib/staff/actions";
+import { maskUserEmail } from "@/lib/utils/mask";
 
 interface StaffHeaderProps {
   email?: string | null;
@@ -65,7 +66,7 @@ export function StaffHeader({
                 <User className="size-3.5 text-muted-foreground shrink-0" />
               )}
               <span className="font-medium text-foreground max-w-[140px] truncate min-w-0">
-                {email || "Staff Member"}
+                {email ? maskUserEmail(email) : "Staff Member"}
               </span>
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase shrink-0 ${

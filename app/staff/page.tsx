@@ -12,6 +12,7 @@ import {
 import { getPortalNotifications } from "@/lib/notifications/queries";
 import { StaffDashboard } from "@/components/staff/staff-dashboard";
 import { staffSignOutAction } from "@/lib/staff/actions";
+import { maskUserEmail } from "@/lib/utils/mask";
 
 export const instant = false;
 
@@ -40,7 +41,7 @@ export default async function StaffPage() {
             Access Restricted
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-            Your account ({session.user?.email}) does not have active staff or admin
+            Your account ({session.user?.email ? maskUserEmail(session.user.email) : "user"}) does not have active staff or admin
             privileges to access the Namma Bakery operations dashboard.
           </p>
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
