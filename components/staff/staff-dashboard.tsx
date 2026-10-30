@@ -28,6 +28,10 @@ import type {
   CustomCakeOperationalSummary,
 } from "@/lib/custom-cake/types";
 import { Coffee, ShoppingBag, Sparkles } from "lucide-react";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { NotificationsProvider } from "@/components/notifications/notifications-context";
+import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
+import type { PortalNotification } from "@/lib/notifications/types";
 
 interface StaffDashboardProps {
   orders: StaffOrder[];
@@ -36,6 +40,8 @@ interface StaffDashboardProps {
   customCakeSummary: CustomCakeOperationalSummary;
   userEmail?: string | null;
   role: StaffRole | null;
+  initialNotifications?: PortalNotification[];
+  initialUnreadCount?: number;
 }
 
 export function StaffDashboard({
@@ -45,6 +51,8 @@ export function StaffDashboard({
   customCakeSummary,
   userEmail,
   role,
+  initialNotifications = [],
+  initialUnreadCount = 0,
 }: StaffDashboardProps) {
   const router = useRouter();
 
@@ -72,6 +80,34 @@ export function StaffDashboard({
     React.useState<CustomCakeModalType | null>(null);
 
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  // Sync state with URL search parameters (deep-linking from notifications / toasts)
+  React.useEffect(() => {
+    function syncFromUrl() {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const orderIdParam = params.get("orderId");
+      const requestIdParam = params.get("requestId");
+
+      if (tabParam === "CUSTOM_CAKES" || requestIdParam) {
+        setActiveTab("CUSTOM_CAKES");
+        if (requestIdParam) {
+          setSelectedCustomCakeId(requestIdParam);
+        }
+      } else if (tabParam === "ORDERS" || orderIdParam) {
+        setActiveTab("ORDERS");
+        if (orderIdParam) {
+          setSelectedOrderId(orderIdParam);
+          setActiveOrderFilter("ALL");
+        }
+      }
+    }
+
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, []);
 
   // User-scoped unread custom cake tracking
   const storageKey = React.useMemo(() => {
@@ -135,6 +171,23 @@ export function StaffDashboard({
     );
   }, [customCakeRequests, selectedCustomCakeId]);
 
+  // Active/queued counts for tab badges (exclude terminal/resolved states)
+  const queuedOrdersCount = React.useMemo(() => {
+    return (orders || []).filter(
+      (o) =>
+        !["COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW"].includes(o.status)
+    ).length;
+  }, [orders]);
+
+  const queuedCustomCakesCount = React.useMemo(() => {
+    return (customCakeRequests || []).filter(
+      (r) =>
+        !["DECLINED", "CUSTOMER_DECLINED", "EXPIRED", "WITHDRAWN"].includes(
+          r.status
+        )
+    ).length;
+  }, [customCakeRequests]);
+
   const handleRefresh = () => {
     setIsRefreshing(true);
     router.refresh();
@@ -146,71 +199,86 @@ export function StaffDashboard({
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <StaffHeader
-        email={userEmail}
-        role={role}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
-      />
+    <NotificationsProvider
+      initialNotifications={initialNotifications}
+      initialUnreadCount={initialUnreadCount}
+    >
+      <div className="min-h-screen bg-background flex flex-col">
+        {/* Header */}
+        <StaffHeader
+          email={userEmail}
+          role={role}
+          onRefresh={handleRefresh}
+          isRefreshing={isRefreshing}
+        />
 
-      {/* Section Switcher Tabs: Orders vs Custom Cakes (Sticky below StaffHeader) */}
+      {/* Section Switcher Tabs: Orders vs Custom Cakes + Notification Bell (Sticky below StaffHeader) */}
       <div className="sticky top-16 z-20 border-b border-border bg-card/95 backdrop-blur-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-            <button
-              type="button"
-              onClick={() => handleSelectTab("ORDERS")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 ${
-                activeTab === "ORDERS"
-                  ? "bg-cocoa text-cream"
-                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <ShoppingBag className="size-4" />
-              <span>Orders Queue</span>
-              <span
-                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0">
+              <button
+                type="button"
+                onClick={() => handleSelectTab("ORDERS")}
+                className={`flex h-9 items-center gap-2 px-4 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 cursor-pointer ${
                   activeTab === "ORDERS"
-                    ? "bg-cream text-cocoa"
-                    : "bg-muted text-muted-foreground"
+                    ? "bg-cocoa text-cream"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {orders.length}
-              </span>
-            </button>
+                <ShoppingBag className="size-4 shrink-0" />
+                <span>Orders Queue</span>
+                {queuedOrdersCount > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                      activeTab === "ORDERS"
+                        ? "bg-cream text-cocoa"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {queuedOrdersCount}
+                  </span>
+                )}
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleSelectTab("CUSTOM_CAKES")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 relative ${
-                activeTab === "CUSTOM_CAKES"
-                  ? "bg-caramel text-white"
-                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Sparkles className="size-4" />
-              <span>Custom Cake Requests</span>
-              <span
-                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+              <button
+                type="button"
+                onClick={() => handleSelectTab("CUSTOM_CAKES")}
+                className={`flex h-9 items-center gap-2 px-4 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 relative cursor-pointer ${
                   activeTab === "CUSTOM_CAKES"
-                    ? "bg-white text-caramel"
-                    : "bg-muted text-muted-foreground"
+                    ? "bg-caramel text-white"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {customCakeRequests.length}
-              </span>
+                <Sparkles className="size-4 shrink-0" />
+                <span>Custom Cake Requests</span>
+                {queuedCustomCakesCount > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                      activeTab === "CUSTOM_CAKES"
+                        ? "bg-white text-caramel"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {queuedCustomCakesCount}
+                  </span>
+                )}
 
-              {/* Notification pip if there are new unread enquiries */}
-              {hasUnreadCustomCakes && (
-                <span
-                  className="size-2 rounded-full bg-amber-500 absolute -top-1 -right-1 ring-2 ring-background"
-                  title="New custom cake request received"
-                  aria-label="New unread custom cake request"
-                />
-              )}
-            </button>
+                {/* Notification pip if there are new unread enquiries */}
+                {hasUnreadCustomCakes && (
+                  <span
+                    className="size-2 rounded-full bg-amber-500 absolute -top-1 -right-1 ring-2 ring-background"
+                    title="New custom cake request received"
+                    aria-label="New unread custom cake request"
+                  />
+                )}
+              </button>
+            </div>
+
+            {/* Notification Bell anchored to the far right */}
+            <div className="shrink-0 flex items-center">
+              <NotificationBell />
+            </div>
           </div>
         </div>
       </div>
@@ -347,6 +415,10 @@ export function StaffDashboard({
         onClose={() => setActiveCustomCakeModal(null)}
         onSuccess={handleActionSuccess}
       />
+
+      {/* Live Toasts */}
+      <NotificationToastContainer />
     </div>
+    </NotificationsProvider>
   );
 }
