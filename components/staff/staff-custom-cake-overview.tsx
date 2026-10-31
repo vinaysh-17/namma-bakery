@@ -15,17 +15,23 @@ interface StaffCustomCakeOverviewProps {
   summary: CustomCakeOperationalSummary;
   activeFilter: CustomCakeFilterTab;
   onSelectFilter: (filter: CustomCakeFilterTab) => void;
+  selectedDate?: string;
+  todayIst?: string;
 }
 
 export function StaffCustomCakeOverview({
   summary,
   activeFilter,
   onSelectFilter,
+  selectedDate,
+  todayIst,
 }: StaffCustomCakeOverviewProps) {
+  const isToday = !selectedDate || !todayIst || selectedDate === todayIst;
+
   const cards = [
     {
       id: "ALL" as CustomCakeFilterTab,
-      label: "Total Enquiries",
+      label: isToday ? "Today's Enquiries" : "Selected Date Enquiries",
       count: summary.total,
       icon: Sparkles,
       color: "text-foreground",
@@ -76,8 +82,8 @@ export function StaffCustomCakeOverview({
           <button
             key={card.id}
             type="button"
-            onClick={() => onSelectFilter(card.id)}
-            className={`flex flex-col justify-between p-3 sm:p-3.5 rounded-sm border text-left transition-all ${
+            onClick={() => onSelectFilter(isActive ? "ALL" : card.id)}
+            className={`flex flex-col justify-between p-3 sm:p-3.5 rounded-sm border text-left transition-all cursor-pointer ${
               isActive
                 ? card.activeBg
                 : "border-border bg-card hover:border-caramel/40 hover:bg-surface"

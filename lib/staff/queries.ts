@@ -181,45 +181,4 @@ export async function getStaffCustomCakeRequests(options?: {
 /**
  * Calculates operational summary metrics for custom cake enquiries.
  */
-export function calculateCustomCakeSummary(
-  requests: import("@/lib/custom-cake/types").CustomCakeRequest[]
-): import("@/lib/custom-cake/types").CustomCakeOperationalSummary {
-  let pending = 0;
-  let underReview = 0;
-  let quoted = 0;
-  let confirmed = 0;
-  let declinedOrCancelled = 0;
-
-  for (const req of requests) {
-    switch (req.status) {
-      case "SUBMITTED":
-        pending++;
-        break;
-      case "UNDER_REVIEW":
-      case "NEEDS_CLARIFICATION":
-        underReview++;
-        break;
-      case "QUOTED":
-        quoted++;
-        break;
-      case "CUSTOMER_ACCEPTED":
-        confirmed++;
-        break;
-      case "DECLINED":
-      case "CUSTOMER_DECLINED":
-      case "EXPIRED":
-      case "WITHDRAWN":
-        declinedOrCancelled++;
-        break;
-    }
-  }
-
-  return {
-    total: requests.length,
-    pending,
-    underReview,
-    quoted,
-    confirmed,
-    declinedOrCancelled,
-  };
-}
+export { calculateCustomCakeSummary } from "./summary";

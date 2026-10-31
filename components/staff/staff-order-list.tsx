@@ -39,7 +39,7 @@ export function StaffOrderList({
   // Filter orders based on active filter tab and search query
   const filteredOrders = React.useMemo(() => {
     return orders.filter((order) => {
-      // 1. Status Filter
+      // 1. Status Filter (Controlled via Overview Summary Cards)
       if (activeFilter === "TODAY" || activeFilter === "ALL") {
         // Show all orders for the current set
       } else if (activeFilter === "PENDING" && order.status !== "PENDING") {
@@ -98,18 +98,28 @@ export function StaffOrderList({
     }
   };
 
-  const filterTabs: Array<{ id: OrderFilter; label: string }> = [
-    { id: "ALL", label: "All Orders" },
-    { id: "PENDING", label: "Pending" },
-    { id: "ACCEPTED", label: "Accepted" },
-    { id: "READY_FOR_PICKUP", label: "Ready for Pickup" },
-    { id: "COMPLETED", label: "Completed" },
-    { id: "CANCELLED_OR_REJECTED", label: "Cancelled / Rejected" },
-  ];
+  const getFilterDisplayName = (filter: OrderFilter) => {
+    switch (filter) {
+      case "PENDING":
+        return "pending";
+      case "ACCEPTED":
+        return "accepted / in-prep";
+      case "READY_FOR_PICKUP":
+        return "ready for pickup";
+      case "COMPLETED":
+        return "completed";
+      case "CANCELLED_OR_REJECTED":
+        return "cancelled / rejected";
+      default:
+        return "";
+    }
+  };
+
+  const isFiltered = activeFilter !== "ALL" && activeFilter !== "TODAY";
 
   return (
     <div className="space-y-4">
-      {/* Search & Filter Header */}
+      {/* Search Header & Filter Status Indicator */}
       <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -143,34 +153,22 @@ export function StaffOrderList({
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 font-medium self-end sm:self-center">
           <Filter className="size-3.5 text-caramel" />
           <span>
-            Showing <strong className="text-foreground">{filteredOrders.length}</strong> orders
+            Showing <strong className="text-foreground">{filteredOrders.length}</strong>{" "}
+            {isFiltered ? `${getFilterDisplayName(activeFilter)} ` : ""}orders
           </span>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={() => onSelectFilter("ALL")}
+              className="ml-1 text-[11px] text-caramel hover:underline cursor-pointer font-semibold"
+            >
+              (Clear filter)
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Filter Tabs Scrollable Row */}
-      <div className="w-full min-w-0 overflow-x-auto no-scrollbar py-0.5">
-        <div className="flex items-center gap-1.5 flex-nowrap w-max min-w-full">
-          {filterTabs.map((tab) => {
-            const isActive = activeFilter === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onSelectFilter(tab.id)}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors shrink-0 cursor-pointer ${isActive
-                    ? "bg-caramel text-white shadow-2xs"
-                    : "border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-surface"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Order Cards List */}
+      {/* Order Cards List (Primary status filtering is controlled via the Summary Cards above) */}
       {filteredOrders.length === 0 ? (
         <div className="rounded-sm border border-border bg-card p-8 text-center space-y-2">
           <AlertCircle className="size-8 text-muted-foreground/60 mx-auto" />
@@ -180,8 +178,19 @@ export function StaffOrderList({
           <p className="text-xs text-muted-foreground max-w-sm mx-auto">
             {searchQuery
               ? `No orders matching "${searchQuery}". Try searching with a different term.`
-              : `There are no orders in the "${activeFilter.toLowerCase()}" queue right now.`}
+              : isFiltered
+              ? `There are no ${getFilterDisplayName(activeFilter)} orders for this selected date.`
+              : "There are no orders taken/created for this selected date."}
           </p>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={() => onSelectFilter("ALL")}
+              className="mt-2 inline-flex h-8 items-center justify-center rounded-sm border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
+            >
+              Show all orders for this date
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -196,10 +205,11 @@ export function StaffOrderList({
               <div
                 key={order.id}
                 onClick={() => onSelectOrder(order)}
-                className={`group cursor-pointer rounded-sm border p-4 transition-all ${isSelected
+                className={`group cursor-pointer rounded-sm border p-4 transition-all ${
+                  isSelected
                     ? "border-caramel bg-caramel/5 ring-1 ring-caramel"
                     : "border-border bg-card hover:border-caramel/50 hover:bg-surface"
-                  }`}
+                }`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   {/* Left: Order #, Customer, Time */}
@@ -239,11 +249,14 @@ export function StaffOrderList({
                     </div>
                   </div>
 
-                  {/* Right: Pickup Slot & Total */}
+                  {/* Right: Scheduled Pickup Slot & Total */}
                   <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/50">
                     <div className="text-left sm:text-right">
-                      <div className="flex items-center gap-1 text-xs text-foreground font-medium sm:justify-end">
-                        <Clock className="size-3.5 text-caramel" />
+                      <div className="flex items-center gap-1.5 text-xs text-foreground font-medium sm:justify-end">
+                        <Clock className="size-3.5 text-caramel shrink-0" />
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                          Pickup:
+                        </span>
                         <span>
                           {formatIstDate(order.requested_pickup_at)},{" "}
                           {formatIstTime(order.requested_pickup_at)}
@@ -265,16 +278,18 @@ export function StaffOrderList({
                     {order.order_items
                       ?.map((i) => {
                         const variant = formatOrderItemVariant(i);
-                        return `${i.quantity}x ${i.product_name}${variant ? ` (${variant})` : ""
-                          }`;
+                        return `${i.quantity}x ${i.product_name}${
+                          variant ? ` (${variant})` : ""
+                        }`;
                       })
                       .join(", ")}
                   </span>
                   <span
-                    className={`shrink-0 text-[10px] font-bold uppercase ${order.payment_status === "paid"
+                    className={`shrink-0 text-[10px] font-bold uppercase ${
+                      order.payment_status === "paid"
                         ? "text-emerald-700 dark:text-emerald-400"
                         : "text-amber-700 dark:text-amber-400"
-                      }`}
+                    }`}
                   >
                     {order.payment_status === "paid" ? "Paid" : "Pay at Store"}
                   </span>

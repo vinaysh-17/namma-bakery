@@ -1,5 +1,9 @@
 import { getIstDateString } from "@/lib/utils/date";
 import type { OperationalSummary, StaffOrder } from "./types";
+import type {
+  CustomCakeRequest,
+  CustomCakeOperationalSummary,
+} from "@/lib/custom-cake/types";
 
 /**
  * Computes operational summary metrics for a given date in Asia/Kolkata timezone.
@@ -55,5 +59,63 @@ export function calculateOperationalSummary(
     readyForPickup,
     completed,
     cancelledOrRejected,
+  };
+}
+
+/**
+ * Calculates operational summary metrics for custom cake enquiries in Asia/Kolkata timezone.
+ * When selectedDate is provided, metrics are scoped to enquiries created on that date.
+ */
+export function calculateCustomCakeSummary(
+  requests: CustomCakeRequest[],
+  selectedDate?: string
+): CustomCakeOperationalSummary {
+  const targetDateIst = selectedDate;
+
+  let pending = 0;
+  let underReview = 0;
+  let quoted = 0;
+  let confirmed = 0;
+  let declinedOrCancelled = 0;
+  let total = 0;
+
+  for (const req of requests) {
+    if (targetDateIst) {
+      const isTargetDate = getIstDateString(req.created_at) === targetDateIst;
+      if (!isTargetDate) continue;
+    }
+
+    total++;
+
+    switch (req.status) {
+      case "SUBMITTED":
+        pending++;
+        break;
+      case "UNDER_REVIEW":
+      case "NEEDS_CLARIFICATION":
+        underReview++;
+        break;
+      case "QUOTED":
+        quoted++;
+        break;
+      case "CUSTOMER_ACCEPTED":
+        confirmed++;
+        break;
+      case "DECLINED":
+      case "CUSTOMER_DECLINED":
+      case "EXPIRED":
+      case "WITHDRAWN":
+        declinedOrCancelled++;
+        break;
+    }
+  }
+
+  return {
+    total,
+    pending,
+    underReview,
+    quoted,
+    confirmed,
+    declinedOrCancelled,
   };
 }
