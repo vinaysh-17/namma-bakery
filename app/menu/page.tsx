@@ -31,7 +31,7 @@ export default async function MenuPage() {
 
   if (categoriesResult.error || productsResult.error) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <MenuErrorState />
       </div>
     );
@@ -41,17 +41,14 @@ export default async function MenuPage() {
   const products = productsResult.data;
 
   return (
-    <div className="py-8 sm:py-12">
+    <div className="pt-3 pb-8 sm:pt-4 sm:pb-12">
       {/* Introduction & Custom Cake Promotional Section (Scrolls away normally) */}
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <div className="mb-6 sm:mb-8">
-          <span className="font-kannada text-xs font-medium text-caramel">
-            ನಮ್ಮ ಬೇಕರಿ ಮೆನು
-          </span>
-          <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+        <div className="mb-4 sm:mb-5">
+          <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             Bakery Menu
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
+          <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
             Fresh celebration cakes, savoury snacks, and neighbourhood classics.
           </p>
         </div>
@@ -66,7 +63,7 @@ export default async function MenuPage() {
       )}
 
       {/* Product Catalog */}
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 mt-8">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 mt-4 sm:mt-6">
         {products.length === 0 ? (
           <MenuEmptyState
             title="No menu items currently listed"

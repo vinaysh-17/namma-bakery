@@ -59,25 +59,13 @@ export function CategoryNav({ categories, activeSlug, className }: CategoryNavPr
                 ref={isActive ? activeTabRef : undefined}
                 href={`/menu/${category.slug}`}
                 className={cn(
-                  "flex min-h-[48px] shrink-0 items-center gap-1.5 sm:gap-2 rounded-sm px-4 py-2.5 text-xs sm:text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel",
+                  "flex min-h-[48px] shrink-0 items-center justify-center rounded-sm px-4 py-2.5 text-xs sm:text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel",
                   isActive
                     ? "bg-primary text-primary-foreground shadow-xs"
                     : "border border-border bg-card text-foreground hover:bg-secondary hover:text-caramel"
                 )}
               >
-                <span>{category.name}</span>
-                {category.name_kn && (
-                  <span
-                    className={cn(
-                      "font-kannada text-[11px] sm:text-xs",
-                      isActive
-                        ? "text-primary-foreground/80"
-                        : "text-muted-foreground"
-                    )}
-                  >
-                    {category.name_kn}
-                  </span>
-                )}
+                {category.name}
               </Link>
             );
           })}

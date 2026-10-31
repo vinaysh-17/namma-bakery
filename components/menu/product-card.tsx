@@ -155,12 +155,19 @@ function SimpleProductCard({ product }: { product: Product }) {
   );
   const [quantity, setQuantity] = useState<number>(0);
   const [justAdded, setJustAdded] = useState(false);
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!justAdded) return;
     const timer = setTimeout(() => setJustAdded(false), 2000);
     return () => clearTimeout(timer);
   }, [justAdded]);
+
+  useEffect(() => {
+    if (!warningMessage) return;
+    const timer = setTimeout(() => setWarningMessage(null), 2500);
+    return () => clearTimeout(timer);
+  }, [warningMessage]);
 
   // Keep selected variant synchronized if variants change
   const activeVariant =
@@ -185,8 +192,13 @@ function SimpleProductCard({ product }: { product: Product }) {
   const canAddToCart = canOrder && quantity > 0;
 
   const handleAddToCart = () => {
-    // Never silently add quantity 1 if quantity is not explicitly selected
-    if (!canOrder || currentPricePaise === null || quantity <= 0) {
+    // Defensive guard: if somehow triggered while quantity is 0, show message and do not add to cart
+    if (quantity <= 0) {
+      setWarningMessage("Add a quantity first");
+      return;
+    }
+
+    if (!canOrder || currentPricePaise === null) {
       return;
     }
 
@@ -211,12 +223,13 @@ function SimpleProductCard({ product }: { product: Product }) {
       leadTimeMinutes: product.lead_time_minutes,
     });
 
+    setWarningMessage(null);
     setJustAdded(true);
     setQuantity(0); // Reset quantity control to [ Add ] and disable Add to Cart again
   };
 
   return (
-    <div className="group flex flex-col justify-between overflow-hidden rounded-sm border border-border bg-card transition-all duration-300 hover:border-caramel/60 hover:shadow-xs">
+    <div className="relative group flex flex-col justify-between overflow-hidden rounded-sm border border-border bg-card transition-all duration-300 hover:border-caramel/60 hover:shadow-xs">
       <div>
         {/* Visual Header / Image - clicking navigates to detail page without interfering with controls */}
         <Link
@@ -343,7 +356,18 @@ function SimpleProductCard({ product }: { product: Product }) {
       </div>
 
       {/* Action Row: Quantity / Add on Left, Add to Cart on Right */}
-      <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4 pt-2.5 border-t border-border/60 flex items-center justify-between gap-2">
+      <div className="relative px-3.5 pb-3.5 sm:px-4 sm:pb-4 pt-2.5 border-t border-border/60 flex items-center justify-between gap-2">
+        {/* Defensive warning toast / feedback message */}
+        {warningMessage && (
+          <div
+            role="alert"
+            aria-live="polite"
+            className="absolute bottom-12 right-2 z-20 flex items-center gap-1.5 rounded-xs border border-amber-400 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 shadow-md animate-in fade-in slide-in-from-bottom-1 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-700 pointer-events-none"
+          >
+            <span>{warningMessage}</span>
+          </div>
+        )}
+
         {/* Bottom-left: Initial [ Add ] -> Transforms into [ − ] 1 [ + ] */}
         {quantity === 0 ? (
           <button
@@ -352,6 +376,7 @@ function SimpleProductCard({ product }: { product: Product }) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
+              setWarningMessage(null);
               setQuantity(1);
             }}
             className={cn(
@@ -402,48 +427,61 @@ function SimpleProductCard({ product }: { product: Product }) {
         )}
 
         {/* Bottom-right: Add to Cart button (Disabled until quantity > 0) */}
-        <button
-          type="button"
-          disabled={!canAddToCart}
+        <div
+          className="relative inline-flex"
           onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleAddToCart();
+            if (canOrder && quantity <= 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              setWarningMessage("Add a quantity first");
+            }
           }}
-          aria-label={
-            canAddToCart
-              ? `Add ${quantity} of ${product.name} to cart`
-              : quantity === 0
-              ? `Select a quantity for ${product.name} first`
-              : "Cannot add to cart"
-          }
-          className={cn(
-            "flex h-8 items-center justify-center gap-1.5 rounded-xs px-3 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel",
-            !canAddToCart
-              ? "bg-muted text-muted-foreground/70 cursor-not-allowed border border-border/50"
-              : justAdded
-              ? "bg-emerald-600 text-white font-medium shadow-xs"
-              : "bg-caramel text-white hover:bg-caramel/90 active:scale-[0.98] shadow-xs"
-          )}
         >
-          {justAdded ? (
-            <>
-              <Check className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Added</span>
-            </>
-          ) : (
-            <>
-              <ShoppingBag className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>
-                {!product.is_available
-                  ? "Unavailable"
-                  : !product.orderable_online
-                  ? "In-Store"
-                  : "Add to Cart"}
-              </span>
-            </>
-          )}
-        </button>
+          <button
+            type="button"
+            disabled={!canAddToCart}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleAddToCart();
+            }}
+            aria-label={
+              !product.is_available
+                ? `${product.name} is currently unavailable`
+                : !product.orderable_online
+                ? `${product.name} is available in-store only`
+                : canAddToCart
+                ? `Add ${quantity} of ${product.name} to cart`
+                : `Select a quantity for ${product.name} first`
+            }
+            className={cn(
+              "flex h-8 items-center justify-center gap-1.5 rounded-xs px-3 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel",
+              !canAddToCart
+                ? "bg-muted text-muted-foreground/70 cursor-not-allowed border border-border/50"
+                : justAdded
+                ? "bg-emerald-600 text-white font-medium shadow-xs"
+                : "bg-caramel text-white hover:bg-caramel/90 active:scale-[0.98] shadow-xs"
+            )}
+          >
+            {justAdded ? (
+              <>
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Added</span>
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>
+                  {!product.is_available
+                    ? "Unavailable"
+                    : !product.orderable_online
+                    ? "In-Store"
+                    : "Add to Cart"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

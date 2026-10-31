@@ -8,10 +8,10 @@ interface ProductBadgesProps {
 export function ProductBadges({
   isBestSeller,
   isFeatured,
-  isNewArrival,
   isSeasonal,
 }: ProductBadgesProps) {
-  const hasBadges = isBestSeller || isFeatured || isNewArrival || isSeasonal;
+  // Note: New Arrival badge is displayed on listing cards, not inside product detail pages
+  const hasBadges = isBestSeller || isFeatured || isSeasonal;
   if (!hasBadges) return null;
 
   return (
@@ -24,11 +24,6 @@ export function ProductBadges({
       {isFeatured && !isBestSeller && (
         <span className="rounded-xs border border-border bg-card px-2.5 py-1 text-xs font-medium tracking-wide text-foreground uppercase">
           Featured
-        </span>
-      )}
-      {isNewArrival && (
-        <span className="rounded-xs border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-xs font-semibold tracking-wide text-emerald-800 uppercase dark:bg-emerald-950/30 dark:text-emerald-300">
-          New Arrival
         </span>
       )}
       {isSeasonal && (

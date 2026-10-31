@@ -62,7 +62,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
 
   if (categoryResult.error) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <MenuErrorState message="Could not load this category right now." />
       </div>
     );
@@ -82,7 +82,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
 
   if (productsError) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <MenuErrorState message="Could not load items for this category." />
       </div>
     );
@@ -91,14 +91,14 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
   const categories = categoriesResult.data ?? [];
 
   return (
-    <div className="py-8 sm:py-12">
+    <div className="pt-3 pb-8 sm:pt-4 sm:pb-12">
       {/* Category Header & Breadcrumb (Scrolls away normally) */}
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         {/* Breadcrumb back navigation */}
-        <div className="mb-6">
+        <div className="mb-2">
           <Link
             href="/menu"
-            className="inline-flex min-h-[48px] items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+            className="inline-flex items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>All Menu Categories</span>
@@ -106,17 +106,12 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
         </div>
 
         {/* Category Header */}
-        <div className="mb-8">
-          {category.name_kn && (
-            <span className="font-kannada text-xs font-medium text-caramel">
-              {category.name_kn}
-            </span>
-          )}
-          <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+        <div className="mb-3 sm:mb-4">
+          <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             {category.name}
           </h1>
           {category.description && (
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+            <p className="mt-1 max-w-2xl text-xs sm:text-sm leading-relaxed text-muted-foreground">
               {category.description}
             </p>
           )}
@@ -129,7 +124,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
       )}
 
       {/* Products list */}
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 mt-8">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 mt-4 sm:mt-6">
         {products.length === 0 ? (
           <MenuEmptyState
             title={`No items currently in ${category.name}`}
