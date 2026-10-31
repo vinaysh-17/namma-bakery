@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   AlertCircle,
+  CheckCircle2,
   Loader2,
   X,
 } from "lucide-react";
@@ -11,6 +12,7 @@ import type { StaffOrder } from "@/lib/staff/types";
 import {
   transitionOrderAction,
   recordStorePaymentAction,
+  completeOrderAndRecordPaymentAction,
 } from "@/lib/staff/actions";
 import { formatPaise } from "@/lib/utils/money";
 import { formatIstDateTime } from "@/lib/utils/date";
@@ -22,13 +24,14 @@ export type ModalType =
   | { type: "START_PREPARING"; order: StaffOrder }
   | { type: "READY"; order: StaffOrder }
   | { type: "COMPLETE"; order: StaffOrder }
+  | { type: "COMPLETE_AND_PAY"; order: StaffOrder }
   | { type: "NO_SHOW"; order: StaffOrder }
   | { type: "RECORD_PAYMENT"; order: StaffOrder };
 
 interface StaffStatusModalProps {
   modal: ModalType | null;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (orderId?: string) => void;
 }
 
 export function StaffStatusModal({
@@ -55,7 +58,7 @@ function StaffStatusModalContent({
 }: {
   modal: NonNullable<ModalType>;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (orderId?: string) => void;
 }) {
   const { order, type } = modal;
 
@@ -93,7 +96,24 @@ function StaffStatusModalContent({
           return;
         }
 
-        onSuccess();
+        onSuccess(order.id);
+        onClose();
+        return;
+      }
+
+      if (type === "COMPLETE_AND_PAY") {
+        const res = await completeOrderAndRecordPaymentAction({
+          orderId: order.id,
+          note: reasonNote.trim() || undefined,
+        });
+
+        if (!res.success) {
+          setErrorMessage(res.error || "Failed to complete handover.");
+          setIsSubmitting(false);
+          return;
+        }
+
+        onSuccess(order.id);
         onClose();
         return;
       }
@@ -105,12 +125,7 @@ function StaffStatusModalContent({
       switch (type) {
         case "ACCEPT":
           targetStatus = "ACCEPTED";
-          if (!estimatedReadyAt) {
-            setErrorMessage("Please set an estimated ready time.");
-            setIsSubmitting(false);
-            return;
-          }
-          readyTime = new Date(estimatedReadyAt).toISOString();
+          readyTime = estimatedReadyAt ? new Date(estimatedReadyAt).toISOString() : undefined;
           note = reasonNote.trim() || undefined;
           break;
 
@@ -168,7 +183,7 @@ function StaffStatusModalContent({
         return;
       }
 
-      onSuccess();
+      onSuccess(order.id);
       onClose();
     } catch (err) {
       console.error("[StaffStatusModal] Action error:", err);
@@ -187,6 +202,10 @@ function StaffStatusModalContent({
         return "Mark Order Ready for Pickup";
       case "COMPLETE":
         return "Complete & Handover Order";
+      case "COMPLETE_AND_PAY":
+        return order.payment_status === "paid"
+          ? "Complete Handover"
+          : "Collect Payment & Handover";
       case "NO_SHOW":
         return "Mark Order as No-Show";
       case "REJECT":
@@ -251,18 +270,17 @@ function StaffStatusModalContent({
                   htmlFor="estimatedReadyAt"
                   className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
                 >
-                  Estimated Ready Time <span className="text-destructive">*</span>
+                  Estimated Ready Time <span className="text-muted-foreground font-normal lowercase">(optional)</span>
                 </label>
                 <input
                   id="estimatedReadyAt"
                   type="datetime-local"
-                  required
                   value={estimatedReadyAt}
                   onChange={(e) => setEstimatedReadyAt(e.target.value)}
                   className="w-full min-h-[44px] rounded-sm border border-border bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Defaulted to customer&apos;s requested pickup time. Adjust if the kitchen requires more time.
+                  Optional. Adjust if you would like to communicate an estimated ready time, or leave as is.
                 </p>
               </div>
 
@@ -277,6 +295,47 @@ function StaffStatusModalContent({
                   id="acceptNote"
                   type="text"
                   placeholder="e.g. Sponge cooling, will ice by 3 PM"
+                  value={reasonNote}
+                  onChange={(e) => setReasonNote(e.target.value)}
+                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* COMPLETE_AND_PAY: Combined payment collection and handover */}
+          {type === "COMPLETE_AND_PAY" && (
+            <div className="space-y-3">
+              {order.payment_status !== "paid" ? (
+                <div className="rounded-sm border border-emerald-300 bg-emerald-50/60 p-4 text-center dark:bg-emerald-950/30 dark:border-emerald-800">
+                  <span className="text-xs uppercase tracking-wider text-emerald-800 dark:text-emerald-300 font-semibold">
+                    Counter Payment Due
+                  </span>
+                  <p className="font-heading text-3xl font-bold text-foreground mt-1">
+                    {formatPaise(order.total_paise)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Collect payment (Cash or UPI) at counter before handing over order.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span>Payment already verified as paid. Hand over items to customer.</span>
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="handoverNote"
+                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
+                >
+                  Optional Handover Note
+                </label>
+                <input
+                  id="handoverNote"
+                  type="text"
+                  placeholder="e.g. Picked up by customer at bakery counter"
                   value={reasonNote}
                   onChange={(e) => setReasonNote(e.target.value)}
                   className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
@@ -402,11 +461,13 @@ function StaffStatusModalContent({
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 ${
+              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer ${
                 type === "REJECT" || type === "CANCEL" || type === "NO_SHOW"
                   ? "bg-destructive hover:bg-destructive/90"
                   : type === "RECORD_PAYMENT"
                   ? "bg-emerald-600 hover:bg-emerald-700"
+                  : type === "COMPLETE_AND_PAY"
+                  ? "bg-cocoa hover:bg-cocoa/90"
                   : "bg-caramel hover:bg-caramel/90"
               }`}
             >
@@ -416,7 +477,15 @@ function StaffStatusModalContent({
                   <span>Processing...</span>
                 </>
               ) : (
-                <span>Confirm</span>
+                <span>
+                  {type === "COMPLETE_AND_PAY"
+                    ? order.payment_status === "paid"
+                      ? "Complete Handover"
+                      : "Collect Payment & Handover"
+                    : type === "ACCEPT"
+                    ? "Confirm & Accept"
+                    : "Confirm"}
+                </span>
               )}
             </button>
           </div>

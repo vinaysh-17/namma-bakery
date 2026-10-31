@@ -37,6 +37,7 @@ export async function getStaffOrders(options?: {
         rejection_reason,
         cancellation_reason,
         cancelled_by,
+        custom_request_id,
         created_at,
         updated_at,
         completed_at,

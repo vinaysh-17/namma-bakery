@@ -130,7 +130,7 @@ export async function transitionOrderAction(params: {
   orderId: string;
   toStatus: OrderStatus;
   note?: string;
-  estimatedReadyAt?: string;
+  estimatedReadyAt?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const session = await requireStaffSession();
@@ -159,12 +159,33 @@ export async function transitionOrderAction(params: {
       }
     }
 
-    const { error } = await supabase.rpc("transition_order", {
+    let { error } = await supabase.rpc("transition_order", {
       p_order_id: params.orderId,
       p_to: params.toStatus,
       p_note: params.note?.trim() || null,
       p_estimated_ready_at: params.estimatedReadyAt || null,
     });
+
+    // If database function requires an estimated ready time, fallback to requested_pickup_at
+    if (
+      error &&
+      error.message.includes("ESTIMATED_READY_TIME_REQUIRED") &&
+      !params.estimatedReadyAt
+    ) {
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("requested_pickup_at")
+        .eq("id", params.orderId)
+        .maybeSingle();
+
+      const retryRes = await supabase.rpc("transition_order", {
+        p_order_id: params.orderId,
+        p_to: params.toStatus,
+        p_note: params.note?.trim() || null,
+        p_estimated_ready_at: orderData?.requested_pickup_at || null,
+      });
+      error = retryRes.error;
+    }
 
     if (error) {
       console.error("[transitionOrderAction] Transition RPC error:", error.message);
@@ -174,7 +195,7 @@ export async function transitionOrderAction(params: {
       if (error.message.includes("ESTIMATED_READY_TIME_REQUIRED")) {
         return {
           success: false,
-          error: "An estimated ready time is required to accept this order.",
+          error: "Could not accept order without estimated ready time.",
         };
       }
       if (error.message.includes("INVALID_TRANSITION")) {
@@ -202,6 +223,89 @@ export async function transitionOrderAction(params: {
     return {
       success: false,
       error: "Failed to update order status. Please check connectivity and try again.",
+    };
+  }
+}
+
+/**
+ * Server action to record an in-store counter payment and finalize customer handover
+ * in a single operation. If order is already paid, completes handover directly.
+ */
+export async function completeOrderAndRecordPaymentAction(params: {
+  orderId: string;
+  note?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await requireStaffSession();
+    if (!session.isStaff) {
+      return { success: false, error: "Forbidden: Staff privileges required." };
+    }
+
+    const supabase = await createClient();
+
+    // Verify order exists and is eligible for completion
+    const { data: order, error: fetchErr } = await supabase
+      .from("orders")
+      .select("id, status, payment_status, total_paise")
+      .eq("id", params.orderId)
+      .maybeSingle();
+
+    if (fetchErr || !order) {
+      return { success: false, error: "Order not found." };
+    }
+
+    if (order.status !== "READY_FOR_PICKUP") {
+      return {
+        success: false,
+        error: "Order must be ready for pickup before completing handover.",
+      };
+    }
+
+    // 1. Record payment if unpaid
+    if (order.payment_status !== "paid") {
+      const { error: payErr } = await supabase.rpc("record_store_payment", {
+        p_order_id: params.orderId,
+        p_amount_paise: order.total_paise,
+      });
+
+      if (payErr && !payErr.message.includes("ALREADY_PAID")) {
+        console.error(
+          "[completeOrderAndRecordPaymentAction] Payment RPC error:",
+          payErr.message
+        );
+        return {
+          success: false,
+          error: "Failed to record payment for this order. Please try again.",
+        };
+      }
+    }
+
+    // 2. Transition order to COMPLETED
+    const { error: transErr } = await supabase.rpc("transition_order", {
+      p_order_id: params.orderId,
+      p_to: "COMPLETED",
+      p_note: params.note?.trim() || "Handover completed at bakery counter",
+      p_estimated_ready_at: null,
+    });
+
+    if (transErr) {
+      console.error(
+        "[completeOrderAndRecordPaymentAction] Handover transition error:",
+        transErr.message
+      );
+      return {
+        success: false,
+        error: "Failed to mark order as completed. Please try again.",
+      };
+    }
+
+    revalidatePath("/staff");
+    return { success: true };
+  } catch (err) {
+    console.error("[completeOrderAndRecordPaymentAction] Execution failure:", err);
+    return {
+      success: false,
+      error: "Failed to complete handover. Please try again.",
     };
   }
 }

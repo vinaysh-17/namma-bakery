@@ -1,17 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { StaffHeader } from "./staff-header";
 import { StaffOverview } from "./staff-overview";
+import { StaffDateNavigator } from "./staff-date-navigator";
 import { StaffOrderList } from "./staff-order-list";
 import { StaffOrderDetail } from "./staff-order-detail";
 import { StaffStatusModal, type ModalType } from "./staff-status-modal";
-import { StaffCustomCakeOverview } from "./staff-custom-cake-overview";
-import {
-  StaffCustomCakeList,
-  type CustomCakeFilterTab,
-} from "./staff-custom-cake-list";
+import { StaffCustomCakeList } from "./staff-custom-cake-list";
 import { StaffCustomCakeDetail } from "./staff-custom-cake-detail";
 import {
   StaffCustomCakeModal,
@@ -27,16 +24,18 @@ import type {
   CustomCakeRequest,
   CustomCakeOperationalSummary,
 } from "@/lib/custom-cake/types";
-import { Coffee, ShoppingBag, Sparkles, CalendarDays } from "lucide-react";
+import { ShoppingBag, Sparkles } from "lucide-react";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { NotificationsProvider } from "@/components/notifications/notifications-context";
 import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
 import type { PortalNotification } from "@/lib/notifications/types";
 import { getIstDateString, formatIstDate } from "@/lib/utils/date";
+import { calculateOperationalSummary } from "@/lib/staff/summary";
 import {
-  calculateOperationalSummary,
-  calculateCustomCakeSummary,
-} from "@/lib/staff/summary";
+  calculateCustomCakeOrderSummary,
+  getCustomCakeStaffStatus,
+  matchesStaffFilter,
+} from "@/lib/staff/custom-cake-workflow";
 
 interface StaffDashboardProps {
   orders: StaffOrder[];
@@ -47,12 +46,6 @@ interface StaffDashboardProps {
   role: StaffRole | null;
   initialNotifications?: PortalNotification[];
   initialUnreadCount?: number;
-}
-
-function formatDisplayDate(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-");
-  if (!y || !m || !d) return dateStr;
-  return `${d} / ${m} / ${y}`;
 }
 
 export function StaffDashboard({
@@ -77,8 +70,9 @@ export function StaffDashboard({
   const [selectedDate, setSelectedDate] = React.useState<string>(todayIst);
   const [activeOrderFilter, setActiveOrderFilter] =
     React.useState<OrderFilter>("ALL");
+  // Selection is only ever set by an explicit user action (row click / deep link).
   const [selectedOrderId, setSelectedOrderId] = React.useState<string | null>(
-    orders[0]?.id || null
+    null
   );
   const [activeOrderModal, setActiveOrderModal] =
     React.useState<ModalType | null>(null);
@@ -99,69 +93,141 @@ export function StaffDashboard({
   const [selectedCustomCakeDate, setSelectedCustomCakeDate] =
     React.useState<string>(todayIst);
   const [activeCustomCakeFilter, setActiveCustomCakeFilter] =
-    React.useState<CustomCakeFilterTab>("ALL");
+    React.useState<OrderFilter>("ALL");
   const [selectedCustomCakeId, setSelectedCustomCakeId] = React.useState<
     string | null
-  >(customCakeRequests[0]?.id || null);
+  >(null);
+  // Pending-stage dialogs (accept / reject a request)
   const [activeCustomCakeModal, setActiveCustomCakeModal] =
     React.useState<CustomCakeModalType | null>(null);
+  // Order-stage dialogs (ready / collect payment & handover / cancel) for the linked order
+  const [activeCustomOrderModal, setActiveCustomOrderModal] =
+    React.useState<ModalType | null>(null);
 
-  // Filter custom cake requests for the selected date (created_at in IST)
-  const customCakeRequestsForSelectedDate = React.useMemo(() => {
-    return customCakeRequests.filter(
-      (r) => getIstDateString(r.created_at) === selectedCustomCakeDate
-    );
-  }, [customCakeRequests, selectedCustomCakeDate]);
+  // Orders created from custom cake requests, keyed by request id
+  const linkedOrderByRequestId = React.useMemo(() => {
+    const map = new Map<string, StaffOrder>();
+    for (const o of orders) {
+      if (o.custom_request_id) map.set(o.custom_request_id, o);
+    }
+    return map;
+  }, [orders]);
 
-  // Operational summary for custom cake requests for the selected date
+  // Order-style staff status of a request (from its linked order, else its enquiry stage)
+  const getStaffStatus = React.useCallback(
+    (req: CustomCakeRequest) =>
+      getCustomCakeStaffStatus(req, linkedOrderByRequestId.get(req.id)),
+    [linkedOrderByRequestId]
+  );
+
+  // Requests in the active view:
+  // "PENDING" => every PENDING request across all dates (global pending workload)
+  // otherwise => requests created on the given date
+  const getCustomCakeView = React.useCallback(
+    (filter: OrderFilter, date: string) => {
+      if (filter === "PENDING") {
+        return customCakeRequests.filter(
+          (r) => getStaffStatus(r) === "PENDING"
+        );
+      }
+      return customCakeRequests.filter(
+        (r) => getIstDateString(r.created_at) === date
+      );
+    },
+    [customCakeRequests, getStaffStatus]
+  );
+
+  const customCakeRequestsForView = React.useMemo(
+    () => getCustomCakeView(activeCustomCakeFilter, selectedCustomCakeDate),
+    [getCustomCakeView, activeCustomCakeFilter, selectedCustomCakeDate]
+  );
+
+  // Summary: date-specific, except Pending which is the global pending workload
   const customCakeSummaryForSelectedDate = React.useMemo(() => {
-    return calculateCustomCakeSummary(customCakeRequests, selectedCustomCakeDate);
-  }, [customCakeRequests, selectedCustomCakeDate]);
+    return calculateCustomCakeOrderSummary(
+      customCakeRequests.map((r) => ({
+        created_at: r.created_at,
+        staffStatus: getStaffStatus(r),
+      })),
+      selectedCustomCakeDate,
+      (iso) => getIstDateString(iso)
+    );
+  }, [customCakeRequests, getStaffStatus, selectedCustomCakeDate]);
 
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [appliedDeepLinkKey, setAppliedDeepLinkKey] = React.useState<string | null>(null);
+  const refreshRequestedForKey = React.useRef<string | null>(null);
+  const searchParams = useSearchParams();
+  const urlKey = searchParams.toString();
 
-  // Sync state with URL search parameters (deep-linking from notifications / toasts)
-  React.useEffect(() => {
-    function syncFromUrl() {
-      if (typeof window === "undefined") return;
-      const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get("tab");
-      const orderIdParam = params.get("orderId");
-      const requestIdParam = params.get("requestId");
+  // Remove only the record-selection params from the URL (keeps tab and anything else),
+  // without a navigation or server round trip.
+  const clearUrlSelection = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("orderId") && !params.has("requestId")) return;
+    params.delete("orderId");
+    params.delete("requestId");
+    const qs = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+  }, []);
 
-      if (tabParam === "CUSTOM_CAKES" || requestIdParam) {
-        setActiveTab("CUSTOM_CAKES");
-        if (requestIdParam) {
-          const match = customCakeRequests.find((r) => r.id === requestIdParam);
-          if (match) {
-            setSelectedCustomCakeDate(getIstDateString(match.created_at));
-            setSelectedCustomCakeId(match.id);
-            setActiveCustomCakeFilter("ALL");
-          } else {
-            setSelectedCustomCakeId(requestIdParam);
-            setActiveCustomCakeFilter("ALL");
-          }
-        }
-      } else if (tabParam === "ORDERS" || orderIdParam) {
-        setActiveTab("ORDERS");
-        if (orderIdParam) {
-          const match = orders.find((o) => o.id === orderIdParam);
-          if (match) {
-            setSelectedDate(getIstDateString(match.created_at));
-            setSelectedOrderId(match.id);
-            setActiveOrderFilter("ALL");
-          } else {
-            setSelectedOrderId(orderIdParam);
-            setActiveOrderFilter("ALL");
-          }
-        }
-      }
+  // URL -> state: deep links from notifications / toasts, including when the portal is
+  // already open (router.push updates useSearchParams). Selection IDs come from the
+  // structured notification link, never from message text. State is adjusted during
+  // render (keyed on the URL) rather than in an effect.
+  const urlParams = new URLSearchParams(urlKey);
+  const tabParam = urlParams.get("tab");
+  const orderIdParam = urlParams.get("orderId");
+  const requestIdParam = urlParams.get("requestId");
+  const deepLinkKey = `${tabParam || ""}:${orderIdParam || ""}:${requestIdParam || ""}`;
+
+  const deepLinkRequest = requestIdParam
+    ? customCakeRequests.find((r) => r.id === requestIdParam)
+    : undefined;
+  const deepLinkOrder =
+    !requestIdParam && orderIdParam
+      ? orders.find((o) => o.id === orderIdParam)
+      : undefined;
+  // A linked record that is not in the loaded data yet (e.g. just created)
+  const deepLinkMissing =
+    (Boolean(requestIdParam) && !deepLinkRequest) ||
+    (!requestIdParam && Boolean(orderIdParam) && !deepLinkOrder);
+
+  if (deepLinkKey !== appliedDeepLinkKey && !deepLinkMissing) {
+    setAppliedDeepLinkKey(deepLinkKey);
+    if (deepLinkRequest) {
+      setActiveTab("CUSTOM_CAKES");
+      setActiveCustomCakeFilter("ALL");
+      setSelectedCustomCakeDate(getIstDateString(deepLinkRequest.created_at));
+      setSelectedCustomCakeId(deepLinkRequest.id);
+      } else if (deepLinkOrder) {
+      setActiveTab("ORDERS");
+      setActiveOrderFilter("ALL");
+      setSelectedDate(getIstDateString(deepLinkOrder.created_at));
+      setSelectedOrderId(deepLinkOrder.id);
+    } else if (
+      appliedDeepLinkKey === null &&
+      (tabParam === "CUSTOM_CAKES" || tabParam === "ORDERS")
+    ) {
+      // Tab-only URL: honour on first load only, so clearing a selection param later
+      // never switches tabs under the user
+      setActiveTab(tabParam);
     }
+  }
 
-    syncFromUrl();
-    window.addEventListener("popstate", syncFromUrl);
-    return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [orders, customCakeRequests]);
+  // Missing linked record: refresh server data once; the render-time sync above then
+  // applies the link automatically when the new props arrive.
+  React.useEffect(() => {
+    if (deepLinkMissing && refreshRequestedForKey.current !== deepLinkKey) {
+      refreshRequestedForKey.current = deepLinkKey;
+      router.refresh();
+    }
+  }, [deepLinkMissing, deepLinkKey, router]);
 
   // User-scoped unread custom cake tracking
   const storageKey = React.useMemo(() => {
@@ -214,42 +280,111 @@ export function StaffDashboard({
     return latestTime > lastSeenTimestamp;
   }, [activeTab, lastSeenTimestamp, customCakeRequests]);
 
-  // Sync selected order objects scoped to the active date
+  // Selected order: resolved only from the explicit selected ID (kept across status
+  // changes so the panel stays on the same order after an action). Never auto-selects.
   const selectedOrder = React.useMemo(() => {
-    if (!ordersForSelectedDate.length) return null;
-    return (
-      ordersForSelectedDate.find((o) => o.id === selectedOrderId) ||
-      ordersForSelectedDate[0] ||
-      null
-    );
-  }, [ordersForSelectedDate, selectedOrderId]);
+    if (!selectedOrderId) return null;
+    return orders.find((o) => o.id === selectedOrderId) || null;
+  }, [orders, selectedOrderId]);
 
-  // Sync selected custom cake enquiry scoped to the active date
+  // Selected custom cake request must belong to the active view AND the active status
+  // filter. Never falls back to another request; if a status change moves it out of the
+  // active filter, the selection resolves to null and the panel closes.
   const selectedCustomCake = React.useMemo(() => {
-    if (!customCakeRequestsForSelectedDate.length) return null;
+    if (!selectedCustomCakeId) return null;
     return (
-      customCakeRequestsForSelectedDate.find((c) => c.id === selectedCustomCakeId) ||
-      customCakeRequestsForSelectedDate[0] ||
-      null
+      customCakeRequestsForView.find(
+        (c) =>
+          c.id === selectedCustomCakeId &&
+          matchesStaffFilter(getStaffStatus(c), activeCustomCakeFilter)
+      ) || null
     );
-  }, [customCakeRequestsForSelectedDate, selectedCustomCakeId]);
+  }, [
+    customCakeRequestsForView,
+    selectedCustomCakeId,
+    activeCustomCakeFilter,
+    getStaffStatus,
+  ]);
 
-  // Active/queued counts for tab badges (exclude terminal/resolved states)
-  const queuedOrdersCount = React.useMemo(() => {
-    return (orders || []).filter(
-      (o) =>
-        !["COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW"].includes(o.status)
-    ).length;
+  // Drop a selection that is no longer valid (e.g. a status change moved it out of the
+  // active filter) so it can never silently reappear under another filter.
+  if (selectedCustomCakeId && !selectedCustomCake) {
+    setSelectedCustomCakeId(null);
+  }
+
+  // ---- Orders handlers ----
+  const handleSelectOrder = (order: StaffOrder) => {
+    setSelectedOrderId(order.id);
+    clearUrlSelection();
+  };
+
+  const handleCloseOrder = () => {
+    setSelectedOrderId(null);
+    clearUrlSelection();
+  };
+
+  const handleOrderDateChange = (date: string) => {
+    setSelectedDate(date);
+    // Drop the selection if it does not belong to the newly selected date
+    const current = selectedOrderId
+      ? orders.find((o) => o.id === selectedOrderId)
+      : null;
+    if (!current || getIstDateString(current.created_at) !== date) {
+      setSelectedOrderId(null);
+      clearUrlSelection();
+    }
+  };
+
+  // ---- Custom cake handlers ----
+  const handleCloseCustomCake = () => {
+    setSelectedCustomCakeId(null);
+    clearUrlSelection();
+  };
+
+  const handleSelectCustomCake = (req: CustomCakeRequest | null) => {
+    setSelectedCustomCakeId(req ? req.id : null);
+    clearUrlSelection();
+  };
+
+  const handleCustomCakeDateChange = (date: string) => {
+    setSelectedCustomCakeDate(date);
+    const stillValid =
+      selectedCustomCakeId !== null &&
+      getCustomCakeView(activeCustomCakeFilter, date).some(
+        (r) => r.id === selectedCustomCakeId
+      );
+    if (!stillValid) {
+      setSelectedCustomCakeId(null);
+      clearUrlSelection();
+    }
+  };
+
+  // Summary-card filter change: keep the selection only if it is still in the new view
+  const handleSelectCustomCakeFilter = (filter: OrderFilter) => {
+    setActiveCustomCakeFilter(filter);
+    const stillValid =
+      selectedCustomCakeId !== null &&
+      getCustomCakeView(filter, selectedCustomCakeDate).some(
+        (r) =>
+          r.id === selectedCustomCakeId &&
+          matchesStaffFilter(getStaffStatus(r), filter)
+      );
+    if (!stillValid) {
+      setSelectedCustomCakeId(null);
+      clearUrlSelection();
+    }
+  };
+
+  // Pending review orders count for top navigation badge (strictly PENDING orders waiting for action)
+  const pendingOrdersCount = React.useMemo(() => {
+    return (orders || []).filter((o) => o.status === "PENDING").length;
   }, [orders]);
 
-  const queuedCustomCakesCount = React.useMemo(() => {
-    return (customCakeRequests || []).filter(
-      (r) =>
-        !["DECLINED", "CUSTOMER_DECLINED", "EXPIRED", "WITHDRAWN"].includes(
-          r.status
-        )
-    ).length;
-  }, [customCakeRequests]);
+  // Pending custom cake count for the top navigation badge (global, any date)
+  const pendingCustomCakesCount = React.useMemo(() => {
+    return customCakeRequests.filter((r) => getStaffStatus(r) === "PENDING")
+      .length;
+  }, [customCakeRequests, getStaffStatus]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -257,7 +392,19 @@ export function StaffDashboard({
     setTimeout(() => setIsRefreshing(false), 800);
   };
 
-  const handleActionSuccess = () => {
+  // Order action: stay on the same order (never move to another one)
+  const handleActionSuccess = (orderId?: string) => {
+    if (orderId) {
+      setSelectedOrderId(orderId);
+    }
+    router.refresh();
+  };
+
+  // Custom cake / linked-order action: the same request stays selected and the panel
+  // updates in place once fresh data arrives. If the new status no longer belongs to the
+  // active filter, the selection resolves to null and the panel closes.
+  const handleCustomCakeActionSuccess = (requestId: string) => {
+    setSelectedCustomCakeId(requestId);
     router.refresh();
   };
 
@@ -291,7 +438,7 @@ export function StaffDashboard({
                 >
                   <ShoppingBag className="size-4 shrink-0" />
                   <span>Orders Queue</span>
-                  {queuedOrdersCount > 0 && (
+                  {pendingOrdersCount > 0 && (
                     <span
                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                         activeTab === "ORDERS"
@@ -299,7 +446,7 @@ export function StaffDashboard({
                           : "bg-muted text-muted-foreground"
                       }`}
                     >
-                      {queuedOrdersCount}
+                      {pendingOrdersCount}
                     </span>
                   )}
                 </button>
@@ -315,7 +462,7 @@ export function StaffDashboard({
                 >
                   <Sparkles className="size-4 shrink-0" />
                   <span>Custom Cake Requests</span>
-                  {queuedCustomCakesCount > 0 && (
+                  {pendingCustomCakesCount > 0 && (
                     <span
                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
                         activeTab === "CUSTOM_CAKES"
@@ -323,7 +470,7 @@ export function StaffDashboard({
                           : "bg-muted text-muted-foreground"
                       }`}
                     >
-                      {queuedCustomCakesCount}
+                      {pendingCustomCakesCount}
                     </span>
                   )}
 
@@ -353,44 +500,20 @@ export function StaffDashboard({
           {activeTab === "ORDERS" && (
             <div className="space-y-6">
               {/* Date-Based Order History Toolbar */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-sm border border-border bg-card">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-foreground">Order Date:</span>
-                  <div className="relative inline-flex items-center">
-                    <div className="flex h-8 items-center gap-2 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:border-caramel/50 transition-colors cursor-pointer shadow-2xs">
-                      <span>{formatDisplayDate(selectedDate)}</span>
-                      <CalendarDays className="size-3.5 text-caramel shrink-0" />
-                    </div>
-                    <input
-                      type="date"
-                      value={selectedDate}
-                      onChange={(e) => {
-                        if (e.target.value) setSelectedDate(e.target.value);
-                      }}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      aria-label="Select order date"
-                      title="Click to select order date"
-                    />
-                  </div>
-                  {selectedDate !== todayIst && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedDate(todayIst)}
-                      className="h-8 px-2.5 rounded-sm border border-caramel/40 bg-caramel/10 text-caramel hover:bg-caramel/20 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      Jump to Today
-                    </button>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Showing orders created on <strong className="text-foreground">{formatIstDate(selectedDate)}</strong>
-                  {selectedDate === todayIst && (
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
-                      Today
-                    </span>
-                  )}
-                </div>
-              </div>
+              <StaffDateNavigator
+                label="Order Date:"
+                noun="order"
+                value={selectedDate}
+                todayIst={todayIst}
+                onChange={handleOrderDateChange}
+              >
+                Showing orders created on <strong className="text-foreground">{formatIstDate(selectedDate)}</strong>
+                {selectedDate === todayIst && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
+                    Today
+                  </span>
+                )}
+              </StaffDateNavigator>
 
               <section aria-label="Operational Overview">
                 <StaffOverview
@@ -415,12 +538,12 @@ export function StaffDashboard({
                     orders={ordersForSelectedDate}
                     selectedOrderId={selectedOrder?.id || null}
                     activeFilter={activeOrderFilter}
-                    onSelectOrder={(order) => setSelectedOrderId(order.id)}
+                    onSelectOrder={handleSelectOrder}
                     onSelectFilter={setActiveOrderFilter}
                   />
                 </section>
 
-                {selectedOrder ? (
+                {selectedOrder && (
                   <aside
                     aria-label="Order Details"
                     className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs min-w-0"
@@ -429,21 +552,10 @@ export function StaffDashboard({
                       key={selectedOrder.id}
                       order={selectedOrder}
                       role={role}
-                      onClose={() => setSelectedOrderId(null)}
+                      onClose={handleCloseOrder}
                       onOpenModal={(modal) => setActiveOrderModal(modal)}
                     />
                   </aside>
-                ) : (
-                  <div className="hidden lg:flex col-span-5 xl:col-span-4 rounded-sm border border-dashed border-border p-12 flex-col items-center justify-center text-center text-muted-foreground space-y-3 min-h-[300px]">
-                    <Coffee className="size-8 text-muted-foreground/60" />
-                    <p className="text-sm font-medium">
-                      Select an order to view full details
-                    </p>
-                    <p className="text-xs">
-                      Inspect customer notes, cake message, items, and trigger
-                      status updates.
-                    </p>
-                  </div>
                 )}
               </div>
             </div>
@@ -453,52 +565,41 @@ export function StaffDashboard({
           {activeTab === "CUSTOM_CAKES" && (
             <div className="space-y-6">
               {/* Date-Based Custom Cake History Toolbar */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-sm border border-border bg-card">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-foreground">Request Date:</span>
-                  <div className="relative inline-flex items-center">
-                    <div className="flex h-8 items-center gap-2 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:border-caramel/50 transition-colors cursor-pointer shadow-2xs">
-                      <span>{formatDisplayDate(selectedCustomCakeDate)}</span>
-                      <CalendarDays className="size-3.5 text-caramel shrink-0" />
-                    </div>
-                    <input
-                      type="date"
-                      value={selectedCustomCakeDate}
-                      onChange={(e) => {
-                        if (e.target.value) setSelectedCustomCakeDate(e.target.value);
-                      }}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      aria-label="Select request date"
-                      title="Click to select request date"
-                    />
-                  </div>
-                  {selectedCustomCakeDate !== todayIst && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCustomCakeDate(todayIst)}
-                      className="h-8 px-2.5 rounded-sm border border-caramel/40 bg-caramel/10 text-caramel hover:bg-caramel/20 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      Jump to Today
-                    </button>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Showing requests created on <strong className="text-foreground">{formatIstDate(selectedCustomCakeDate)}</strong>
-                  {selectedCustomCakeDate === todayIst && (
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
-                      Today
-                    </span>
-                  )}
-                </div>
-              </div>
+              <StaffDateNavigator
+                label="Request Date:"
+                noun="request"
+                value={selectedCustomCakeDate}
+                todayIst={todayIst}
+                onChange={handleCustomCakeDateChange}
+              >
+                {activeCustomCakeFilter === "PENDING" ? (
+                  <span>
+                    Showing <strong className="text-amber-700 dark:text-amber-400">all pending review enquiries across all dates</strong>
+                  </span>
+                ) : (
+                  <>
+                    Showing requests created on <strong className="text-foreground">{formatIstDate(selectedCustomCakeDate)}</strong>
+                    {selectedCustomCakeDate === todayIst && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
+                        Today
+                      </span>
+                    )}
+                  </>
+                )}
+              </StaffDateNavigator>
 
               <section aria-label="Custom Cake Overview">
-                <StaffCustomCakeOverview
+                <StaffOverview
                   summary={customCakeSummaryForSelectedDate}
                   activeFilter={activeCustomCakeFilter}
-                  onSelectFilter={setActiveCustomCakeFilter}
+                  onSelectFilter={handleSelectCustomCakeFilter}
                   selectedDate={selectedCustomCakeDate}
                   todayIst={todayIst}
+                  totalLabel={
+                    selectedCustomCakeDate === todayIst
+                      ? "Today's Requests"
+                      : "Selected Date Requests"
+                  }
                 />
               </section>
 
@@ -512,15 +613,16 @@ export function StaffDashboard({
                   }`}
                 >
                   <StaffCustomCakeList
-                    requests={customCakeRequestsForSelectedDate}
-                    selectedRequestId={selectedCustomCakeId}
+                    requests={customCakeRequestsForView}
+                    getStaffStatus={getStaffStatus}
+                    selectedRequestId={selectedCustomCake?.id ?? null}
                     activeFilter={activeCustomCakeFilter}
-                    onSelectRequest={(req) => setSelectedCustomCakeId(req.id)}
-                    onSelectFilter={setActiveCustomCakeFilter}
+                    onSelectRequest={handleSelectCustomCake}
+                    onSelectFilter={handleSelectCustomCakeFilter}
                   />
                 </section>
 
-                {selectedCustomCake ? (
+                {selectedCustomCake && (
                   <aside
                     aria-label="Custom Cake Details"
                     className="col-span-12 lg:col-span-5 xl:col-span-4 rounded-sm border border-border bg-card shadow-xs min-w-0"
@@ -528,21 +630,13 @@ export function StaffDashboard({
                     <StaffCustomCakeDetail
                       key={selectedCustomCake.id}
                       request={selectedCustomCake}
-                      onClose={() => setSelectedCustomCakeId(null)}
+                      staffStatus={getStaffStatus(selectedCustomCake)}
+                      linkedOrder={linkedOrderByRequestId.get(selectedCustomCake.id)}
+                      onClose={handleCloseCustomCake}
                       onOpenModal={(modal) => setActiveCustomCakeModal(modal)}
+                      onOpenOrderModal={(modal) => setActiveCustomOrderModal(modal)}
                     />
                   </aside>
-                ) : (
-                  <div className="hidden lg:flex col-span-5 xl:col-span-4 rounded-sm border border-dashed border-border p-12 flex-col items-center justify-center text-center text-muted-foreground space-y-3 min-h-[300px]">
-                    <Sparkles className="size-8 text-muted-foreground/60" />
-                    <p className="text-sm font-medium">
-                      Select a custom cake enquiry to inspect
-                    </p>
-                    <p className="text-xs">
-                      Review design descriptions, reference photos, customer
-                      details, and manage status.
-                    </p>
-                  </div>
                 )}
               </div>
             </div>
@@ -556,11 +650,21 @@ export function StaffDashboard({
           onSuccess={handleActionSuccess}
         />
 
-        {/* Custom Cake Status Modal */}
+        {/* Custom cake: accept / reject a pending request */}
         <StaffCustomCakeModal
           modal={activeCustomCakeModal}
           onClose={() => setActiveCustomCakeModal(null)}
-          onSuccess={handleActionSuccess}
+          onSuccess={handleCustomCakeActionSuccess}
+        />
+
+        {/* Custom cake: order-stage actions on the linked order (same dialogs as Orders Queue) */}
+        <StaffStatusModal
+          modal={activeCustomOrderModal}
+          onClose={() => setActiveCustomOrderModal(null)}
+          onSuccess={() => {
+            if (selectedCustomCakeId) handleCustomCakeActionSuccess(selectedCustomCakeId);
+            else router.refresh();
+          }}
         />
 
         {/* Live Toasts */}

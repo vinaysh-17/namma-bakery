@@ -98,6 +98,124 @@ export async function updateCustomCakeStatusAction(params: {
 }
 
 /**
+ * Accepts a custom cake request as an order, using the existing quote workflow end to end:
+ *   staff_review_request (-> UNDER_REVIEW, if needed)
+ *   -> staff_send_quote   (records the agreed price + pickup, -> QUOTED)
+ *   -> customer_accept_quote (service role; creates the linked `orders` row in ACCEPTED,
+ *      with its order item, status history, and sets the request to CUSTOMER_ACCEPTED)
+ *
+ * After this the request is driven by the normal order actions (ready for pickup,
+ * collect payment & handover, cancel) on the linked order. Each RPC re-validates state,
+ * and customer_accept_quote only accepts a QUOTED request, so a double submit cannot
+ * create a second order (orders.custom_request_id is also unique).
+ */
+export async function acceptCustomCakeAsOrderAction(params: {
+  requestId: string;
+  pricePaise: number;
+  confirmedPickupAt: string;
+  note?: string;
+}): Promise<{ success: boolean; error?: string; orderNumber?: string }> {
+  try {
+    const session = await requireStaffSession();
+    if (!session.isStaff) {
+      return { success: false, error: "Unauthorized: Staff privileges required." };
+    }
+
+    const { requestId, pricePaise, confirmedPickupAt, note } = params;
+    if (
+      !Number.isInteger(pricePaise) ||
+      pricePaise <= 0 ||
+      pricePaise > 10_000_000
+    ) {
+      return { success: false, error: "Enter a valid agreed price." };
+    }
+    const pickup = new Date(confirmedPickupAt);
+    if (Number.isNaN(pickup.getTime()) || pickup.getTime() <= Date.now()) {
+      return { success: false, error: "Pickup time must be in the future." };
+    }
+
+    const supabase = await createClient();
+    const { data: request, error: fetchError } = await supabase
+      .from("custom_cake_requests")
+      .select("id, status, public_token")
+      .eq("id", requestId)
+      .maybeSingle();
+
+    if (fetchError || !request) {
+      return { success: false, error: "Request not found." };
+    }
+    if (request.status === "CUSTOMER_ACCEPTED") {
+      return { success: false, error: "This request has already been accepted." };
+    }
+    if (
+      !["SUBMITTED", "UNDER_REVIEW", "NEEDS_CLARIFICATION", "QUOTED"].includes(
+        request.status
+      )
+    ) {
+      return { success: false, error: "This request can no longer be accepted." };
+    }
+
+    const mapError = (message: string): string => {
+      if (message.includes("PICKUP_BEFORE_READY")) {
+        return "Pickup time must be in the future.";
+      }
+      if (message.includes("INVALID_PRICE")) return "Enter a valid agreed price.";
+      if (message.includes("DAY_FULL")) {
+        return "The custom cake limit for that pickup day has been reached.";
+      }
+      if (message.includes("INVALID_TRANSITION")) {
+        return "This request can no longer be accepted.";
+      }
+      return "Failed to accept this request. Please try again.";
+    };
+
+    if (request.status === "SUBMITTED") {
+      const { error } = await supabase.rpc("staff_review_request", {
+        p_request_id: requestId,
+        p_to: "UNDER_REVIEW",
+        p_message: null,
+      });
+      if (error) {
+        console.error("[acceptCustomCakeAsOrderAction] review error:", error.message);
+        return { success: false, error: mapError(error.message) };
+      }
+    }
+
+    const { error: quoteError } = await supabase.rpc("staff_send_quote", {
+      p_request_id: requestId,
+      p_price_paise: pricePaise,
+      p_prep_minutes: 0,
+      p_confirmed_pickup: pickup.toISOString(),
+      p_note: note?.trim() || null,
+    });
+    if (quoteError) {
+      console.error("[acceptCustomCakeAsOrderAction] quote error:", quoteError.message);
+      return { success: false, error: mapError(quoteError.message) };
+    }
+
+    const adminClient = createAdminClient();
+    const { data: accepted, error: acceptError } = await adminClient.rpc(
+      "customer_accept_quote",
+      { p_token: request.public_token }
+    );
+    if (acceptError) {
+      console.error("[acceptCustomCakeAsOrderAction] accept error:", acceptError.message);
+      return { success: false, error: mapError(acceptError.message) };
+    }
+
+    revalidatePath("/staff");
+    const row = Array.isArray(accepted) ? accepted[0] : accepted;
+    return { success: true, orderNumber: row?.order_number };
+  } catch (err) {
+    console.error("[acceptCustomCakeAsOrderAction] Execution failure:", err);
+    return {
+      success: false,
+      error: "An unexpected error occurred. Please try again.",
+    };
+  }
+}
+
+/**
  * Adds an internal staff note or customer message on a custom cake enquiry.
  */
 export async function addCustomCakeStaffNoteAction(params: {

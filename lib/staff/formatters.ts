@@ -60,3 +60,17 @@ export function formatOrderItemVariant(item: {
 
   return null;
 }
+
+/**
+ * Concise completion confirmation shown in the completed order detail panel.
+ * Display only — the backend status value remains "COMPLETED".
+ */
+export const PAYMENT_RECEIVED_HANDOVER_LABEL = "Payment received & handed over";
+
+/**
+ * Human-readable label for an order status badge in staff views
+ * (e.g. READY_FOR_PICKUP -> "READY FOR PICKUP", COMPLETED -> "COMPLETED").
+ */
+export function formatOrderStatusLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}

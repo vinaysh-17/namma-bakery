@@ -64,15 +64,20 @@ export function calculateOperationalSummary(
 
 /**
  * Calculates operational summary metrics for custom cake enquiries in Asia/Kolkata timezone.
- * When selectedDate is provided, metrics are scoped to enquiries created on that date.
+ * Total, in-review, confirmed, and declined metrics are scoped to enquiries created on selectedDate.
+ * The Pending Review metric represents the global pending workload across all dates, matching
+ * the staff navigation badge.
  */
 export function calculateCustomCakeSummary(
   requests: CustomCakeRequest[],
   selectedDate?: string
 ): CustomCakeOperationalSummary {
-  const targetDateIst = selectedDate;
+  const targetDateIst = selectedDate || getIstDateString();
 
-  let pending = 0;
+  // Pending Review represents global pending workload waiting for staff action,
+  // consistent with the top navigation badge.
+  const pending = (requests || []).filter((r) => r.status === "SUBMITTED").length;
+
   let underReview = 0;
   let quoted = 0;
   let confirmed = 0;
@@ -80,23 +85,23 @@ export function calculateCustomCakeSummary(
   let total = 0;
 
   for (const req of requests) {
-    if (targetDateIst) {
-      const isTargetDate = getIstDateString(req.created_at) === targetDateIst;
-      if (!isTargetDate) continue;
-    }
+    const isTargetDate = getIstDateString(req.created_at) === targetDateIst;
+    if (!isTargetDate) continue;
 
     total++;
 
     switch (req.status) {
       case "SUBMITTED":
-        pending++;
+        // Counted globally in pending
         break;
       case "UNDER_REVIEW":
       case "NEEDS_CLARIFICATION":
         underReview++;
         break;
       case "QUOTED":
+        // Quote sent, awaiting customer: still an in-progress enquiry, not confirmed.
         quoted++;
+        underReview++;
         break;
       case "CUSTOMER_ACCEPTED":
         confirmed++;

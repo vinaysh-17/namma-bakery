@@ -57,6 +57,8 @@ export interface StaffOrder {
   rejection_reason?: string | null;
   cancellation_reason?: string | null;
   cancelled_by?: string | null;
+  /** Set when this order was created from a custom cake request */
+  custom_request_id?: string | null;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;

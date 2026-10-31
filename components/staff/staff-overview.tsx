@@ -17,6 +17,8 @@ interface StaffOverviewProps {
   onSelectFilter: (filter: OrderFilter) => void;
   selectedDate?: string;
   todayIst?: string;
+  /** Override the first card label (e.g. custom cake requests use "Selected Date Orders") */
+  totalLabel?: string;
 }
 
 export function StaffOverview({
@@ -25,13 +27,14 @@ export function StaffOverview({
   onSelectFilter,
   selectedDate,
   todayIst,
+  totalLabel,
 }: StaffOverviewProps) {
   const isToday = !selectedDate || !todayIst || selectedDate === todayIst;
 
   const cards = [
     {
       id: "TODAY" as OrderFilter,
-      label: isToday ? "Today's Orders" : "Selected Date Orders",
+      label: totalLabel ?? (isToday ? "Today's Orders" : "Selected Date Orders"),
       count: summary.totalToday,
       icon: CalendarDays,
       color: "text-foreground",
@@ -99,7 +102,7 @@ export function StaffOverview({
             } ${card.highlight && !isActive ? "border-amber-300 bg-amber-50/50" : ""}`}
           >
             <div className="flex items-center justify-between w-full mb-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground line-clamp-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider leading-tight text-muted-foreground min-w-0">
                 {card.label}
               </span>
               <Icon className={`size-3.5 shrink-0 ${card.color}`} />

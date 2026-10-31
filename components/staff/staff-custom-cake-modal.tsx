@@ -2,19 +2,30 @@
 
 import * as React from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
-import type { CustomCakeRequest, CustomCakeStatus } from "@/lib/custom-cake/types";
-import { updateCustomCakeStatusAction } from "@/lib/custom-cake/staff-actions";
+import type { CustomCakeRequest } from "@/lib/custom-cake/types";
+import {
+  acceptCustomCakeAsOrderAction,
+  updateCustomCakeStatusAction,
+} from "@/lib/custom-cake/staff-actions";
+import {
+  getStaffStatusBadgeClass,
+  type CustomCakeStaffStatus,
+} from "@/lib/staff/custom-cake-workflow";
+import { formatOrderStatusLabel } from "@/lib/staff/formatters";
 
+/**
+ * Dialogs for the PENDING stage of a custom cake request (before an order exists).
+ * Once accepted, the linked order is driven by the regular StaffStatusModal
+ * (ready for pickup, collect payment & handover, cancel).
+ */
 export type CustomCakeModalType =
-  | { type: "REVIEW"; request: CustomCakeRequest }
-  | { type: "CONFIRM"; request: CustomCakeRequest }
-  | { type: "DECLINE"; request: CustomCakeRequest }
-  | { type: "CLARIFICATION"; request: CustomCakeRequest };
+  | { type: "ACCEPT"; request: CustomCakeRequest; staffStatus: CustomCakeStaffStatus }
+  | { type: "REJECT"; request: CustomCakeRequest; staffStatus: CustomCakeStaffStatus };
 
 interface StaffCustomCakeModalProps {
   modal: CustomCakeModalType | null;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (requestId: string) => void;
 }
 
 export function StaffCustomCakeModal({
@@ -34,66 +45,94 @@ export function StaffCustomCakeModal({
   );
 }
 
+function toLocalInputValue(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function StaffCustomCakeModalContent({
   modal,
   onClose,
   onSuccess,
 }: {
-  modal: NonNullable<CustomCakeModalType>;
+  modal: CustomCakeModalType;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (requestId: string) => void;
 }) {
-  const { request, type } = modal;
+  const { request, type, staffStatus } = modal;
+
+  // Pre-fill the agreed price from the latest existing quote, if any
+  const initialPrice = React.useMemo(() => {
+    const quotes = [...(request.custom_cake_quotes ?? [])].sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    return quotes[0] ? String(quotes[0].price_paise / 100) : "";
+  }, [request]);
 
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
-  const [noteMessage, setNoteMessage] = React.useState("");
+  const [price, setPrice] = React.useState(initialPrice);
+  const [pickupAt, setPickupAt] = React.useState(() =>
+    toLocalInputValue(request.preferred_pickup_at)
+  );
+  const [note, setNote] = React.useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
     setIsSubmitting(true);
 
-    let toStatus: CustomCakeStatus;
-    switch (type) {
-      case "REVIEW":
-        toStatus = "UNDER_REVIEW";
-        break;
-      case "CONFIRM":
-        toStatus = "CUSTOMER_ACCEPTED";
-        break;
-      case "CLARIFICATION":
-        toStatus = "NEEDS_CLARIFICATION";
-        if (!noteMessage.trim()) {
-          setErrorMessage("Please enter what clarification is needed from the customer.");
-          setIsSubmitting(false);
-          return;
-        }
-        break;
-      case "DECLINE":
-        toStatus = "DECLINED";
-        if (!noteMessage.trim()) {
-          setErrorMessage("A decline reason is required.");
-          setIsSubmitting(false);
-          return;
-        }
-        break;
-    }
-
     try {
-      const res = await updateCustomCakeStatusAction({
-        requestId: request.id,
-        toStatus,
-        message: noteMessage.trim() || undefined,
-      });
+      if (type === "ACCEPT") {
+        const rupees = Number(price);
+        if (!price.trim() || !Number.isFinite(rupees) || rupees <= 0) {
+          setErrorMessage("Enter the agreed price for this cake.");
+          setIsSubmitting(false);
+          return;
+        }
+        const pickup = new Date(pickupAt);
+        if (!pickupAt || Number.isNaN(pickup.getTime())) {
+          setErrorMessage("Choose the confirmed pickup date and time.");
+          setIsSubmitting(false);
+          return;
+        }
 
-      if (!res.success) {
-        setErrorMessage(res.error || "Failed to update status.");
-        setIsSubmitting(false);
-        return;
+        const res = await acceptCustomCakeAsOrderAction({
+          requestId: request.id,
+          pricePaise: Math.round(rupees * 100),
+          confirmedPickupAt: pickup.toISOString(),
+          note: note.trim() || undefined,
+        });
+        if (!res.success) {
+          setErrorMessage(res.error || "Failed to accept this request.");
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        if (!note.trim()) {
+          setErrorMessage("A rejection reason is required.");
+          setIsSubmitting(false);
+          return;
+        }
+        const res = await updateCustomCakeStatusAction({
+          requestId: request.id,
+          toStatus: "DECLINED",
+          message: note.trim(),
+        });
+        if (!res.success) {
+          setErrorMessage(res.error || "Failed to reject this request.");
+          setIsSubmitting(false);
+          return;
+        }
       }
 
-      onSuccess();
+      onSuccess(request.id);
       onClose();
     } catch (err) {
       console.error("[StaffCustomCakeModal] Error:", err);
@@ -102,18 +141,10 @@ function StaffCustomCakeModalContent({
     }
   };
 
-  const getTitle = () => {
-    switch (type) {
-      case "REVIEW":
-        return "Mark Under Review / Contacted";
-      case "CONFIRM":
-        return "Confirm Custom Cake Order";
-      case "CLARIFICATION":
-        return "Request Clarification from Customer";
-      case "DECLINE":
-        return "Decline Custom Cake Request";
-    }
-  };
+  const title =
+    type === "ACCEPT"
+      ? "Accept Custom Cake & Confirm Schedule"
+      : "Reject Custom Cake Request";
 
   return (
     <div
@@ -122,20 +153,29 @@ function StaffCustomCakeModalContent({
       aria-labelledby="custom-cake-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-cocoa/40 backdrop-blur-xs"
     >
-      <div className="w-full max-w-lg rounded-sm border border-border bg-card p-6 shadow-md space-y-5 animate-in fade-in-50 zoom-in-95 duration-150">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-sm border border-border bg-card p-6 shadow-md space-y-5 animate-in fade-in-50 zoom-in-95 duration-150">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
             <h2 id="custom-cake-modal-title" className="font-heading text-lg font-bold text-foreground">
-              {getTitle()}
+              {title}
             </h2>
             <p className="text-xs text-muted-foreground">
               Request <span className="font-mono font-semibold text-foreground">{request.request_number}</span> · {request.customer_name}
+            </p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <span>Current status:</span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(staffStatus)}`}
+              >
+                {formatOrderStatusLabel(staffStatus)}
+              </span>
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
+            aria-label="Close dialog"
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X className="size-5" />
@@ -153,12 +193,85 @@ function StaffCustomCakeModalContent({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {type === "DECLINE" && (
+          {type === "ACCEPT" && (
             <div className="space-y-3">
-              <div className="rounded-sm border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
-                Declining this request will close the enquiry and record your reason in the audit log.
+              <div className="rounded-sm border border-border bg-background p-3 text-xs space-y-1">
+                <span className="text-muted-foreground">Requested Pickup:</span>
+                <span className="font-semibold text-foreground block">
+                  {new Date(request.preferred_pickup_at).toLocaleString("en-IN", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </span>
               </div>
 
+              <div>
+                <label
+                  htmlFor="agreedPrice"
+                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
+                >
+                  Agreed Price (₹) <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="agreedPrice"
+                  type="number"
+                  inputMode="decimal"
+                  min="1"
+                  step="0.01"
+                  required
+                  placeholder="e.g. 2400"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="confirmedPickup"
+                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
+                >
+                  Confirmed Pickup / Ready Time <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="confirmedPickup"
+                  type="datetime-local"
+                  required
+                  value={pickupAt}
+                  onChange={(e) => setPickupAt(e.target.value)}
+                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="acceptNote"
+                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
+                >
+                  Optional Note / Memo
+                </label>
+                <input
+                  id="acceptNote"
+                  type="text"
+                  placeholder="e.g. Agreed on sugar paste figurines"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                />
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Accepting creates the order for this cake. You can then mark it ready
+                for pickup and collect payment at handover.
+              </p>
+            </div>
+          )}
+
+          {type === "REJECT" && (
+            <div className="space-y-3">
+              <div className="rounded-sm border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+                Rejecting this request closes it and records your reason in the audit log.
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {[
                   "Kitchen at capacity on date",
@@ -169,102 +282,28 @@ function StaffCustomCakeModalContent({
                   <button
                     key={preset}
                     type="button"
-                    onClick={() => setNoteMessage(preset)}
+                    onClick={() => setNote(preset)}
                     className="rounded-sm border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground hover:border-caramel hover:bg-caramel/5"
                   >
                     {preset}
                   </button>
                 ))}
               </div>
-
               <div>
                 <label
-                  htmlFor="declineReason"
+                  htmlFor="rejectReason"
                   className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
                 >
-                  Decline Reason <span className="text-destructive">*</span>
+                  Rejection Reason <span className="text-destructive">*</span>
                 </label>
                 <textarea
-                  id="declineReason"
+                  id="rejectReason"
                   required
                   rows={3}
                   placeholder="Explain why this custom cake request cannot be accommodated..."
-                  value={noteMessage}
-                  onChange={(e) => setNoteMessage(e.target.value)}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
                   className="w-full rounded-sm border border-border bg-background p-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                />
-              </div>
-            </div>
-          )}
-
-          {type === "CLARIFICATION" && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Set request status to <strong className="text-foreground">Needs Clarification</strong> and record notes on what details need to be confirmed with the customer.
-              </p>
-              <div>
-                <label
-                  htmlFor="clarificationNote"
-                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
-                >
-                  Clarification Note <span className="text-destructive">*</span>
-                </label>
-                <textarea
-                  id="clarificationNote"
-                  required
-                  rows={3}
-                  placeholder="e.g. Need confirmation on fondant vs whipped cream finish, or exact cartoon character choice..."
-                  value={noteMessage}
-                  onChange={(e) => setNoteMessage(e.target.value)}
-                  className="w-full rounded-sm border border-border bg-background p-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                />
-              </div>
-            </div>
-          )}
-
-          {type === "REVIEW" && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Marking this enquiry as <strong className="text-foreground">Under Review</strong> indicates that bakery staff has reviewed the specifications and is contacting the customer via phone.
-              </p>
-              <div>
-                <label
-                  htmlFor="reviewNote"
-                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
-                >
-                  Optional Staff Memo
-                </label>
-                <input
-                  id="reviewNote"
-                  type="text"
-                  placeholder="e.g. Called customer, checking sponge availability"
-                  value={noteMessage}
-                  onChange={(e) => setNoteMessage(e.target.value)}
-                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                />
-              </div>
-            </div>
-          )}
-
-          {type === "CONFIRM" && (
-            <div className="space-y-3">
-              <div className="rounded-sm border border-emerald-300 bg-emerald-50/60 p-3 text-xs text-emerald-950 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200">
-                Confirm that you have spoken with the customer and agreed on the design, flavours, and collection schedule.
-              </div>
-              <div>
-                <label
-                  htmlFor="confirmNote"
-                  className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
-                >
-                  Confirmation Note / Agreed Price
-                </label>
-                <input
-                  id="confirmNote"
-                  type="text"
-                  placeholder="e.g. Agreed on ₹2,400 with sugar paste figurines"
-                  value={noteMessage}
-                  onChange={(e) => setNoteMessage(e.target.value)}
-                  className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
                 />
               </div>
             </div>
@@ -282,11 +321,9 @@ function StaffCustomCakeModalContent({
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 ${
-                type === "DECLINE"
+              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 disabled:opacity-70 ${
+                type === "REJECT"
                   ? "bg-destructive hover:bg-destructive/90"
-                  : type === "CONFIRM"
-                  ? "bg-emerald-600 hover:bg-emerald-700"
                   : "bg-caramel hover:bg-caramel/90"
               }`}
             >
@@ -296,7 +333,7 @@ function StaffCustomCakeModalContent({
                   <span>Updating...</span>
                 </>
               ) : (
-                <span>Confirm</span>
+                <span>{type === "ACCEPT" ? "Accept Order" : "Reject Request"}</span>
               )}
             </button>
           </div>

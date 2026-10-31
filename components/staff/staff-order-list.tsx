@@ -14,7 +14,7 @@ import {
 import type { StaffOrder, OrderFilter } from "@/lib/staff/types";
 import { formatPaise } from "@/lib/utils/money";
 import { formatIstDate, formatIstTime, getIstDateString } from "@/lib/utils/date";
-import { formatOrderItemVariant } from "@/lib/staff/formatters";
+import { formatOrderItemVariant, formatOrderStatusLabel } from "@/lib/staff/formatters";
 
 interface StaffOrderListProps {
   orders: StaffOrder[];
@@ -223,7 +223,7 @@ export function StaffOrderList({
                           order.status
                         )}`}
                       >
-                        {order.status.replace(/_/g, " ")}
+                        {formatOrderStatusLabel(order.status)}
                       </span>
                       {isToday && (
                         <span className="rounded bg-caramel/10 text-caramel text-[10px] font-bold px-1.5 py-0.5 uppercase">

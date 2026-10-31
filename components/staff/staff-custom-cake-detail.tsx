@@ -12,8 +12,19 @@ import {
   Loader2,
   ExternalLink,
 } from "lucide-react";
-import type { CustomCakeRequest, CustomCakeStatus } from "@/lib/custom-cake/types";
+import type { CustomCakeRequest } from "@/lib/custom-cake/types";
+import type { StaffOrder } from "@/lib/staff/types";
 import type { CustomCakeModalType } from "./staff-custom-cake-modal";
+import type { ModalType } from "./staff-status-modal";
+import {
+  getStaffStatusBadgeClass,
+  type CustomCakeStaffStatus,
+} from "@/lib/staff/custom-cake-workflow";
+import {
+  formatOrderStatusLabel,
+  PAYMENT_RECEIVED_HANDOVER_LABEL,
+} from "@/lib/staff/formatters";
+import { formatPaise } from "@/lib/utils/money";
 import {
   addCustomCakeStaffNoteAction,
   getCustomCakeSignedUrlAction,
@@ -22,14 +33,24 @@ import { formatIstDate, formatIstTime, formatIstDateTime } from "@/lib/utils/dat
 
 interface StaffCustomCakeDetailProps {
   request: CustomCakeRequest;
+  /** Order-style staff status derived from the request / its linked order */
+  staffStatus: CustomCakeStaffStatus;
+  /** The order created when staff accepted this request (if any) */
+  linkedOrder?: StaffOrder | null;
   onClose: () => void;
+  /** Pending-stage dialogs (accept / reject request) */
   onOpenModal: (modal: CustomCakeModalType) => void;
+  /** Order-stage dialogs (ready, collect payment & handover, cancel) on the linked order */
+  onOpenOrderModal: (modal: ModalType) => void;
 }
 
 export function StaffCustomCakeDetail({
   request,
+  staffStatus,
+  linkedOrder,
   onClose,
   onOpenModal,
+  onOpenOrderModal,
 }: StaffCustomCakeDetailProps) {
   const [internalNoteInput, setInternalNoteInput] = React.useState("");
   const [isAddingNote, setIsAddingNote] = React.useState(false);
@@ -86,27 +107,6 @@ export function StaffCustomCakeDetail({
     }
   };
 
-  const getStatusBadge = (status: CustomCakeStatus) => {
-    switch (status) {
-      case "SUBMITTED":
-        return "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300";
-      case "UNDER_REVIEW":
-        return "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-300";
-      case "NEEDS_CLARIFICATION":
-        return "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950 dark:text-purple-300";
-      case "QUOTED":
-      case "CUSTOMER_ACCEPTED":
-        return "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300";
-      case "DECLINED":
-      case "CUSTOMER_DECLINED":
-      case "WITHDRAWN":
-      case "EXPIRED":
-        return "bg-destructive/15 text-destructive border-destructive/30";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
-  };
-
   return (
     <div className="flex flex-col bg-card">
       {/* Header */}
@@ -117,11 +117,11 @@ export function StaffCustomCakeDetail({
               {request.request_number}
             </h2>
             <span
-              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider border ${getStatusBadge(
-                request.status
+              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(
+                staffStatus
               )}`}
             >
-              {request.status.replace(/_/g, " ")}
+              {formatOrderStatusLabel(staffStatus)}
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 font-mono">
@@ -142,103 +142,138 @@ export function StaffCustomCakeDetail({
 
       {/* Main Content */}
       <div className="p-4 sm:p-5 space-y-6">
-        {/* Next Operations Bar */}
+        {/* Next Operations Bar - same lifecycle as the Orders Queue */}
         <div className="rounded-sm border border-border bg-background p-3.5 space-y-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
             Available Operations
           </span>
           <div className="flex flex-wrap gap-2">
-            {request.status === "SUBMITTED" && (
+            {staffStatus === "PENDING" && (
               <>
                 <button
                   type="button"
-                  onClick={() => onOpenModal({ type: "REVIEW", request })}
-                  className="h-9 px-3 rounded-sm bg-blue-700 text-white text-xs font-semibold hover:bg-blue-800"
+                  onClick={() => onOpenModal({ type: "ACCEPT", request, staffStatus })}
+                  className="h-9 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 cursor-pointer"
                 >
-                  Mark In Review / Contacted
+                  Accept & Schedule
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOpenModal({ type: "CONFIRM", request })}
-                  className="h-9 px-3 rounded-sm bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
+                  onClick={() => onOpenModal({ type: "REJECT", request, staffStatus })}
+                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
                 >
-                  Confirm Order
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "CLARIFICATION", request })}
-                  className="h-9 px-3 rounded-sm border border-purple-400 text-purple-800 text-xs font-semibold hover:bg-purple-50 dark:text-purple-300 dark:border-purple-800"
-                >
-                  Need Clarification
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "DECLINE", request })}
-                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10"
-                >
-                  Decline Request
+                  Reject Request
                 </button>
               </>
             )}
 
-            {request.status === "UNDER_REVIEW" && (
+            {staffStatus === "ACCEPTED" && linkedOrder && (
               <>
                 <button
                   type="button"
-                  onClick={() => onOpenModal({ type: "CONFIRM", request })}
-                  className="h-9 px-3 rounded-sm bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
+                  onClick={() => onOpenOrderModal({ type: "READY", order: linkedOrder })}
+                  className="h-9 px-3 rounded-sm bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 cursor-pointer"
                 >
-                  Confirm Order
+                  Mark Ready for Pickup
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOpenModal({ type: "CLARIFICATION", request })}
-                  className="h-9 px-3 rounded-sm border border-purple-400 text-purple-800 text-xs font-semibold hover:bg-purple-50 dark:text-purple-300 dark:border-purple-800"
+                  onClick={() => onOpenOrderModal({ type: "CANCEL", order: linkedOrder })}
+                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
                 >
-                  Need Clarification
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "DECLINE", request })}
-                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10"
-                >
-                  Decline Request
+                  Cancel Order
                 </button>
               </>
             )}
 
-            {request.status === "NEEDS_CLARIFICATION" && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "REVIEW", request })}
-                  className="h-9 px-3 rounded-sm bg-blue-700 text-white text-xs font-semibold hover:bg-blue-800"
-                >
-                  Customer Clarified (In Review)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "CONFIRM", request })}
-                  className="h-9 px-3 rounded-sm bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
-                >
-                  Confirm Order
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "DECLINE", request })}
-                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10"
-                >
-                  Decline Request
-                </button>
-              </>
-            )}
-
-            {(request.status === "CUSTOMER_ACCEPTED" || request.status === "DECLINED") && (
+            {staffStatus === "ACCEPTED" && !linkedOrder && (
               <span className="text-xs text-muted-foreground italic py-1.5">
-                This enquiry is currently in a resolved status ({request.status.replace(/_/g, " ")}).
+                Accepted before order tracking was enabled for custom cakes. No order
+                record is linked to this request.
+              </span>
+            )}
+
+            {staffStatus === "READY_FOR_PICKUP" && linkedOrder && (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenOrderModal({ type: "COMPLETE_AND_PAY", order: linkedOrder })
+                  }
+                  className="h-9 px-3 rounded-sm bg-cocoa text-cream text-xs font-semibold hover:bg-cocoa/90 cursor-pointer"
+                >
+                  {linkedOrder.payment_status === "paid"
+                    ? "Complete Handover"
+                    : "Collect Payment & Handover"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenOrderModal({ type: "NO_SHOW", order: linkedOrder })}
+                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
+                >
+                  Mark No Show
+                </button>
+              </>
+            )}
+
+            {staffStatus === "COMPLETED" && linkedOrder && linkedOrder.payment_status !== "paid" && (
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenOrderModal({ type: "RECORD_PAYMENT", order: linkedOrder })
+                }
+                className="h-9 px-3 rounded-sm bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
+              >
+                Collect Payment ({formatPaise(linkedOrder.total_paise)})
+              </button>
+            )}
+
+            {staffStatus === "COMPLETED" && linkedOrder?.payment_status === "paid" && (
+              <span className="text-xs font-medium text-emerald-800 dark:text-emerald-300 py-1.5">
+                {PAYMENT_RECEIVED_HANDOVER_LABEL}
+              </span>
+            )}
+
+            {(staffStatus === "REJECTED" ||
+              staffStatus === "CANCELLED" ||
+              staffStatus === "NO_SHOW") && (
+              <span className="text-xs text-muted-foreground italic py-1.5">
+                This request is {formatOrderStatusLabel(staffStatus).toLowerCase()}
+                {linkedOrder?.cancellation_reason ||
+                linkedOrder?.rejection_reason ||
+                request.decline_reason
+                  ? `: ${
+                      linkedOrder?.cancellation_reason ||
+                      linkedOrder?.rejection_reason ||
+                      request.decline_reason
+                    }`
+                  : "."}
               </span>
             )}
           </div>
+
+          {linkedOrder && (
+            <div className="pt-2 mt-1 border-t border-border/60 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>
+                Order{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {linkedOrder.order_number}
+                </span>
+              </span>
+              <span>
+                Total{" "}
+                <strong className="text-foreground">
+                  {formatPaise(linkedOrder.total_paise)}
+                </strong>
+              </span>
+              <span>
+                Payment{" "}
+                <strong className="text-foreground uppercase">
+                  {linkedOrder.payment_status === "paid" ? "Paid" : "Unpaid"}
+                </strong>
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Customer Information */}

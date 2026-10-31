@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Search,
   Calendar,
+  Clock,
   Sparkles,
   Phone,
   Image as ImageIcon,
@@ -12,26 +13,29 @@ import {
   AlertCircle,
   X,
 } from "lucide-react";
-import type { CustomCakeRequest, CustomCakeStatus } from "@/lib/custom-cake/types";
+import type { CustomCakeRequest } from "@/lib/custom-cake/types";
+import type { OrderFilter } from "@/lib/staff/types";
 import { formatIstDate } from "@/lib/utils/date";
-
-export type CustomCakeFilterTab =
-  | "ALL"
-  | "PENDING"
-  | "UNDER_REVIEW"
-  | "CONFIRMED"
-  | "DECLINED";
+import {
+  getStaffStatusBadgeClass,
+  matchesStaffFilter,
+  type CustomCakeStaffStatus,
+} from "@/lib/staff/custom-cake-workflow";
+import { formatOrderStatusLabel } from "@/lib/staff/formatters";
 
 interface StaffCustomCakeListProps {
   requests: CustomCakeRequest[];
+  /** Staff-facing (order-style) status of a request */
+  getStaffStatus: (request: CustomCakeRequest) => CustomCakeStaffStatus;
   selectedRequestId: string | null;
-  activeFilter: CustomCakeFilterTab;
-  onSelectRequest: (request: CustomCakeRequest) => void;
-  onSelectFilter: (filter: CustomCakeFilterTab) => void;
+  activeFilter: OrderFilter;
+  onSelectRequest: (request: CustomCakeRequest | null) => void;
+  onSelectFilter: (filter: OrderFilter) => void;
 }
 
 export function StaffCustomCakeList({
   requests,
+  getStaffStatus,
   selectedRequestId,
   activeFilter,
   onSelectRequest,
@@ -42,32 +46,12 @@ export function StaffCustomCakeList({
 
   const filteredRequests = React.useMemo(() => {
     return requests.filter((req) => {
-      // 1. Status Filter (Controlled via Overview Summary Cards)
-      if (activeFilter === "PENDING" && req.status !== "SUBMITTED") {
-        return false;
-      }
-      if (
-        activeFilter === "UNDER_REVIEW" &&
-        !["UNDER_REVIEW", "NEEDS_CLARIFICATION"].includes(req.status)
-      ) {
-        return false;
-      }
-      if (
-        activeFilter === "CONFIRMED" &&
-        !["CUSTOMER_ACCEPTED", "QUOTED"].includes(req.status)
-      ) {
-        return false;
-      }
-      if (
-        activeFilter === "DECLINED" &&
-        !["DECLINED", "CUSTOMER_DECLINED", "WITHDRAWN", "EXPIRED"].includes(
-          req.status
-        )
-      ) {
+      // 1. Status filter (summary cards) - same rules as the Orders Queue
+      if (!matchesStaffFilter(getStaffStatus(req), activeFilter)) {
         return false;
       }
 
-      // 2. Search Query
+      // 2. Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchesNumber = req.request_number.toLowerCase().includes(q);
@@ -78,45 +62,36 @@ export function StaffCustomCakeList({
 
       return true;
     });
-  }, [requests, activeFilter, searchQuery]);
+  }, [requests, getStaffStatus, activeFilter, searchQuery]);
 
-  const getStatusBadge = (status: CustomCakeStatus) => {
-    switch (status) {
-      case "SUBMITTED":
-        return "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300";
-      case "UNDER_REVIEW":
-        return "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-300";
-      case "NEEDS_CLARIFICATION":
-        return "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950 dark:text-purple-300";
-      case "QUOTED":
-      case "CUSTOMER_ACCEPTED":
-        return "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300";
-      case "DECLINED":
-      case "CUSTOMER_DECLINED":
-      case "WITHDRAWN":
-      case "EXPIRED":
-        return "bg-destructive/15 text-destructive border-destructive/30";
-      default:
-        return "bg-muted text-muted-foreground";
+  // Clear selection if the selected request is not in the filtered results (search changed)
+  React.useEffect(() => {
+    if (
+      selectedRequestId &&
+      !filteredRequests.some((r) => r.id === selectedRequestId)
+    ) {
+      onSelectRequest(null);
     }
-  };
+  }, [selectedRequestId, filteredRequests, onSelectRequest]);
 
-  const getFilterDisplayName = (filter: CustomCakeFilterTab) => {
+  const getFilterDisplayName = (filter: OrderFilter) => {
     switch (filter) {
       case "PENDING":
-        return "pending review";
-      case "UNDER_REVIEW":
-        return "in-review / contacted";
-      case "CONFIRMED":
-        return "confirmed";
-      case "DECLINED":
-        return "declined / closed";
+        return "pending";
+      case "ACCEPTED":
+        return "accepted";
+      case "READY_FOR_PICKUP":
+        return "ready for pickup";
+      case "COMPLETED":
+        return "completed";
+      case "CANCELLED_OR_REJECTED":
+        return "cancelled / rejected";
       default:
         return "";
     }
   };
 
-  const isFiltered = activeFilter !== "ALL";
+  const isFiltered = activeFilter !== "ALL" && activeFilter !== "TODAY";
 
   return (
     <div className="space-y-4">
@@ -140,7 +115,7 @@ export function StaffCustomCakeList({
                 searchInputRef.current?.focus();
               }}
               className="absolute right-0 top-0 bottom-0 w-12 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              aria-label="Clear enquiry search"
+              aria-label="Clear request search"
               title="Clear search"
             >
               <span className="flex size-7 items-center justify-center rounded-xs hover:bg-muted">
@@ -154,7 +129,12 @@ export function StaffCustomCakeList({
           <Filter className="size-3.5 text-caramel" />
           <span>
             Showing <strong className="text-foreground">{filteredRequests.length}</strong>{" "}
-            {isFiltered ? `${getFilterDisplayName(activeFilter)} ` : ""}enquiries
+            {activeFilter === "PENDING"
+              ? "pending (all dates) "
+              : isFiltered
+              ? `${getFilterDisplayName(activeFilter)} `
+              : ""}
+            requests
           </span>
           {isFiltered && (
             <button
@@ -168,7 +148,7 @@ export function StaffCustomCakeList({
         </div>
       </div>
 
-      {/* Enquiries List (Primary status filtering is controlled via the Summary Cards above) */}
+      {/* Request list (status filtering is controlled via the Summary Cards above) */}
       {filteredRequests.length === 0 ? (
         <div className="rounded-sm border border-border bg-card p-8 text-center space-y-2">
           <AlertCircle className="size-8 text-muted-foreground/60 mx-auto" />
@@ -178,6 +158,8 @@ export function StaffCustomCakeList({
           <p className="text-xs text-muted-foreground max-w-sm mx-auto">
             {searchQuery
               ? `No requests matching "${searchQuery}".`
+              : activeFilter === "PENDING"
+              ? "There are no pending custom cake requests waiting for staff action."
               : isFiltered
               ? `There are no ${getFilterDisplayName(activeFilter)} requests for this selected date.`
               : "There are no custom cake enquiries received/created on this selected date."}
@@ -188,7 +170,7 @@ export function StaffCustomCakeList({
               onClick={() => onSelectFilter("ALL")}
               className="mt-2 inline-flex h-8 items-center justify-center rounded-sm border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
             >
-              Show all enquiries for this date
+              Show all requests for this date
             </button>
           )}
         </div>
@@ -197,6 +179,7 @@ export function StaffCustomCakeList({
           {filteredRequests.map((req) => {
             const isSelected = selectedRequestId === req.id;
             const hasPhoto = Boolean(req.custom_cake_images && req.custom_cake_images.length > 0);
+            const staffStatus = getStaffStatus(req);
 
             return (
               <div
@@ -215,11 +198,26 @@ export function StaffCustomCakeList({
                         {req.request_number}
                       </span>
                       <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStatusBadge(
-                          req.status
+                        className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(
+                          staffStatus
                         )}`}
                       >
-                        {req.status.replace(/_/g, " ")}
+                        {formatOrderStatusLabel(staffStatus)}
+                      </span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-[10px] font-medium inline-flex items-center gap-1 border ${
+                          activeFilter === "PENDING"
+                            ? "bg-amber-50 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 font-semibold"
+                            : "bg-muted text-muted-foreground border-border/60"
+                        }`}
+                      >
+                        <Clock className="size-2.5 text-caramel shrink-0" />
+                        <span>
+                          Submitted:{" "}
+                          <strong className="text-foreground font-semibold">
+                            {formatIstDate(req.created_at)}
+                          </strong>
+                        </span>
                       </span>
                       {hasPhoto && (
                         <span className="rounded bg-caramel/10 text-caramel text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-1">
