@@ -1,18 +1,12 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import {
   Package,
-  FolderTree,
-  ShoppingBag,
-  Sparkles,
   Store,
-  Users,
   ShieldCheck,
   AlertTriangle,
   ArrowRight,
-  PlusCircle,
   History,
 } from "lucide-react";
 import type { AdminOverviewSummary, AuditLogEntry } from "@/lib/admin/types";
@@ -62,210 +56,90 @@ export function AdminOverviewView({
         </div>
       )}
 
-      {/* 6 Key KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
-        {/* Products */}
-        <div
-          onClick={() => onNavigateTab("CATALOG")}
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Products</span>
-            <div className="size-7 rounded-sm bg-caramel/10 text-caramel flex items-center justify-center">
-              <Package className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-bold font-heading text-foreground">
-              {summary.totalProducts}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center justify-between">
-              <span>{summary.availableProducts} active</span>
-              {summary.archivedProducts > 0 && (
+      {/* 1. Menu & Products Management Card */}
+      <div className="rounded-sm border border-border bg-card p-4 sm:p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Package className="size-4 text-caramel" />
+          <h3 className="font-heading font-bold text-sm text-foreground">
+            Menu & Products
+          </h3>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed max-w-2xl">
+          Manage baked goods, prices, availability, dietary tags, and cake pricing tiers.
+        </p>
+        <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-border/40">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">
+              {summary.totalProducts} {summary.totalProducts === 1 ? "Product" : "Products"}
+            </span>
+            <span>·</span>
+            <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+              {summary.availableProducts} active
+            </span>
+            {summary.archivedProducts > 0 && (
+              <>
+                <span>·</span>
                 <span className="text-amber-700 dark:text-amber-400">
                   {summary.archivedProducts} archived
                 </span>
-              )}
-            </div>
+              </>
+            )}
           </div>
-        </div>
-
-        {/* Categories */}
-        <div
-          onClick={() => onNavigateTab("CATALOG")}
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Categories</span>
-            <div className="size-7 rounded-sm bg-amber-500/10 text-amber-700 dark:text-amber-400 flex items-center justify-center">
-              <FolderTree className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-bold font-heading text-foreground">
-              {summary.totalCategories}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              {summary.visibleCategories} visible on menu
-            </div>
-          </div>
-        </div>
-
-        {/* Active Orders Queue */}
-        <Link
-          href="/staff"
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Orders In Queue</span>
-            <div className="size-7 rounded-sm bg-blue-500/10 text-blue-700 dark:text-blue-400 flex items-center justify-center">
-              <ShoppingBag className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-bold font-heading text-foreground">
-              {summary.pendingOrders}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1 group-hover:text-caramel">
-              <span>Open in kitchen</span>
-              <ArrowRight className="size-3" />
-            </div>
-          </div>
-        </Link>
-
-        {/* Custom Cake Enquiries */}
-        <Link
-          href="/staff"
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Cake Enquiries</span>
-            <div className="size-7 rounded-sm bg-purple-500/10 text-purple-700 dark:text-purple-400 flex items-center justify-center">
-              <Sparkles className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-bold font-heading text-foreground">
-              {summary.pendingCustomCakes}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1 group-hover:text-caramel">
-              <span>Review in queue</span>
-              <ArrowRight className="size-3" />
-            </div>
-          </div>
-        </Link>
-
-        {/* Store Status */}
-        <div
-          onClick={() => onNavigateTab("STORE_OPS")}
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Store Status</span>
-            <div className="size-7 rounded-sm bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 flex items-center justify-center">
-              <Store className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-sm sm:text-base font-bold font-heading flex items-center gap-1.5 text-foreground">
-              <span
-                className={`size-2.5 rounded-full ${
-                  summary.isStorePaused ? "bg-amber-500" : "bg-emerald-500"
-                }`}
-              />
-              <span>{summary.isStorePaused ? "Paused" : "Open & Active"}</span>
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              {summary.maxOrdersPerSlot} orders / {summary.slotMinutes}m slot
-            </div>
-          </div>
-        </div>
-
-        {/* Staff Team */}
-        <div
-          onClick={() => onNavigateTab("STAFF")}
-          className="rounded-sm border border-border bg-card p-4 flex flex-col justify-between cursor-pointer hover:border-caramel/50 transition-colors group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Staff Team</span>
-            <div className="size-7 rounded-sm bg-amber-500/10 text-amber-700 dark:text-amber-400 flex items-center justify-center">
-              <Users className="size-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-bold font-heading text-foreground">
-              {summary.activeStaff}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              {summary.adminCount} active admins
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab("CATALOG")}
+            className="h-8 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center justify-center gap-1.5 cursor-pointer w-full sm:w-auto shrink-0"
+          >
+            <span>Catalog Manager</span>
+            <ArrowRight className="size-3.5" />
+          </button>
         </div>
       </div>
 
-      {/* Quick Admin Actions & Direct Shortcuts */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Shortcut: Add New Product */}
-        <div className="rounded-sm border border-border bg-card p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <Package className="size-4 text-caramel" />
-            <h3 className="font-heading font-bold text-sm text-foreground">
-              Menu & Products
-            </h3>
+      {/* 2. Store & Closures and Staff Authorization Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Store & Closures */}
+        <div className="rounded-sm border border-border bg-card p-4 sm:p-5 flex flex-col justify-between space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <Store className="size-4 text-emerald-700 dark:text-emerald-400" />
+              <h3 className="font-heading font-bold text-sm text-foreground">
+                Store & Closures
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Configure order capacities, time slots, emergency pause, and scheduled holiday closures.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Manage baked goods, prices, availability, dietary tags, and cake pricing tiers.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => onNavigateTab("CATALOG")}
-              className="h-8 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <PlusCircle className="size-3.5" />
-              <span>Catalog Manager</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Shortcut: Store Operations */}
-        <div className="rounded-sm border border-border bg-card p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <Store className="size-4 text-emerald-700 dark:text-emerald-400" />
-            <h3 className="font-heading font-bold text-sm text-foreground">
-              Store & Closures
-            </h3>
-          </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Configure order capacities, time slots, emergency pause, and scheduled holiday closures.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
+          <div className="pt-2">
             <button
               type="button"
               onClick={() => onNavigateTab("STORE_OPS")}
-              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer"
+              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer w-full sm:w-auto"
             >
               Configure Store Operations
             </button>
           </div>
         </div>
 
-        {/* Shortcut: Staff Team */}
-        <div className="rounded-sm border border-border bg-card p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-amber-700 dark:text-amber-400" />
-            <h3 className="font-heading font-bold text-sm text-foreground">
-              Staff Authorization
-            </h3>
+        {/* Staff Authorization */}
+        <div className="rounded-sm border border-border bg-card p-4 sm:p-5 flex flex-col justify-between space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-amber-700 dark:text-amber-400" />
+              <h3 className="font-heading font-bold text-sm text-foreground">
+                Staff Authorization
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Review bakery personnel, manage employee roles, and control access to bakery portals.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Review bakery personnel, manage employee roles, and control access to bakery portals.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
+          <div className="pt-2">
             <button
               type="button"
               onClick={() => onNavigateTab("STAFF")}
-              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer"
+              className="h-8 px-3 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors cursor-pointer w-full sm:w-auto"
             >
               Manage Staff Team
             </button>
@@ -273,7 +147,7 @@ export function AdminOverviewView({
         </div>
       </div>
 
-      {/* Recent Administrative Audit Trail */}
+      {/* 3. Recent Administrative Audit Trail */}
       <div className="rounded-sm border border-border bg-card p-4 sm:p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
