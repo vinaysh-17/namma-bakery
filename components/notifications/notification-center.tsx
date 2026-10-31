@@ -139,7 +139,7 @@ export function NotificationCenter({ triggerRef }: NotificationCenterProps = {})
               <Bell className="size-5 opacity-60" />
             </div>
             <p className="text-xs font-medium text-foreground">
-              No notifications yet
+              No new notifications
             </p>
             <p className="text-[11px] text-muted-foreground max-w-[220px] mx-auto">
               New orders and custom cake enquiries will appear here in real-time.

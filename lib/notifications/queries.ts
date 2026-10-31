@@ -21,6 +21,7 @@ export async function getPortalNotifications(
     const { data, error } = await supabase
       .from("portal_notifications")
       .select("*")
+      .eq("is_read", false)
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -30,7 +31,7 @@ export async function getPortalNotifications(
     }
 
     const notifications = (data || []) as PortalNotification[];
-    const unreadCount = notifications.filter((n) => !n.is_read).length;
+    const unreadCount = notifications.length;
 
     return { notifications, unreadCount };
   } catch (err) {
