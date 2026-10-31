@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { ArrowLeft } from "lucide-react";
 import {
   getCategoryBySlug,
@@ -21,6 +22,7 @@ interface CategoryPageProps {
 export async function generateMetadata({
   params,
 }: CategoryPageProps): Promise<Metadata> {
+  await connection();
   const { category: slug } = await params;
   const { data: category } = await getCategoryBySlug(slug);
 
@@ -50,6 +52,7 @@ export async function generateMetadata({
 }
 
 export default async function CategoryPage({ params }: CategoryPageProps) {
+  await connection();
   const { category: slug } = await params;
 
   const [categoryResult, categoriesResult] = await Promise.all([

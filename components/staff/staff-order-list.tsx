@@ -40,16 +40,15 @@ export function StaffOrderList({
   const filteredOrders = React.useMemo(() => {
     return orders.filter((order) => {
       // 1. Status Filter
-      if (activeFilter === "TODAY") {
-        const isToday =
-          getIstDateString(order.requested_pickup_at) === todayIst ||
-          getIstDateString(order.created_at) === todayIst;
-        if (!isToday) return false;
+      if (activeFilter === "TODAY" || activeFilter === "ALL") {
+        // Show all orders for the current set
       } else if (activeFilter === "PENDING" && order.status !== "PENDING") {
         return false;
-      } else if (activeFilter === "ACCEPTED" && order.status !== "ACCEPTED") {
-        return false;
-      } else if (activeFilter === "PREPARING" && order.status !== "PREPARING") {
+      } else if (
+        activeFilter === "ACCEPTED" &&
+        order.status !== "ACCEPTED" &&
+        order.status !== "PREPARING"
+      ) {
         return false;
       } else if (
         activeFilter === "READY_FOR_PICKUP" &&
@@ -76,7 +75,7 @@ export function StaffOrderList({
 
       return true;
     });
-  }, [orders, activeFilter, searchQuery, todayIst]);
+  }, [orders, activeFilter, searchQuery]);
 
   const getStatusBadge = (status: StaffOrder["status"]) => {
     switch (status) {
@@ -101,11 +100,9 @@ export function StaffOrderList({
 
   const filterTabs: Array<{ id: OrderFilter; label: string }> = [
     { id: "ALL", label: "All Orders" },
-    { id: "TODAY", label: "Today" },
     { id: "PENDING", label: "Pending" },
     { id: "ACCEPTED", label: "Accepted" },
-    { id: "PREPARING", label: "Preparing" },
-    { id: "READY_FOR_PICKUP", label: "Ready" },
+    { id: "READY_FOR_PICKUP", label: "Ready for Pickup" },
     { id: "COMPLETED", label: "Completed" },
     { id: "CANCELLED_OR_REJECTED", label: "Cancelled / Rejected" },
   ];
@@ -161,11 +158,10 @@ export function StaffOrderList({
                 key={tab.id}
                 type="button"
                 onClick={() => onSelectFilter(tab.id)}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors shrink-0 cursor-pointer ${
-                  isActive
+                className={`whitespace-nowrap px-3 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-colors shrink-0 cursor-pointer ${isActive
                     ? "bg-caramel text-white shadow-2xs"
                     : "border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-surface"
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>
@@ -200,11 +196,10 @@ export function StaffOrderList({
               <div
                 key={order.id}
                 onClick={() => onSelectOrder(order)}
-                className={`group cursor-pointer rounded-sm border p-4 transition-all ${
-                  isSelected
+                className={`group cursor-pointer rounded-sm border p-4 transition-all ${isSelected
                     ? "border-caramel bg-caramel/5 ring-1 ring-caramel"
                     : "border-border bg-card hover:border-caramel/50 hover:bg-surface"
-                }`}
+                  }`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   {/* Left: Order #, Customer, Time */}
@@ -270,18 +265,16 @@ export function StaffOrderList({
                     {order.order_items
                       ?.map((i) => {
                         const variant = formatOrderItemVariant(i);
-                        return `${i.quantity}x ${i.product_name}${
-                          variant ? ` (${variant})` : ""
-                        }`;
+                        return `${i.quantity}x ${i.product_name}${variant ? ` (${variant})` : ""
+                          }`;
                       })
                       .join(", ")}
                   </span>
                   <span
-                    className={`shrink-0 text-[10px] font-bold uppercase ${
-                      order.payment_status === "paid"
+                    className={`shrink-0 text-[10px] font-bold uppercase ${order.payment_status === "paid"
                         ? "text-emerald-700 dark:text-emerald-400"
                         : "text-amber-700 dark:text-amber-400"
-                    }`}
+                      }`}
                   >
                     {order.payment_status === "paid" ? "Paid" : "Pay at Store"}
                   </span>

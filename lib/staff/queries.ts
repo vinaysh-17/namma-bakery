@@ -1,7 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { getIstDateString } from "@/lib/utils/date";
-import type { OperationalSummary, StaffOrder } from "./types";
+import type { StaffOrder } from "./types";
 
 /**
  * Fetches recent orders for the staff dashboard using the authenticated staff session.
@@ -74,8 +73,8 @@ export async function getStaffOrders(options?: {
           created_at
         )
       `)
-      .order("requested_pickup_at", { ascending: true })
-      .limit(options?.limit ?? 100);
+      .order("created_at", { ascending: false })
+      .limit(options?.limit ?? 500);
 
     if (error) {
       console.error("[getStaffOrders] Database error fetching orders:", error.message);
@@ -92,65 +91,7 @@ export async function getStaffOrders(options?: {
   }
 }
 
-/**
- * Computes today's operational summary metrics in Asia/Kolkata timezone.
- */
-export function calculateOperationalSummary(
-  orders: StaffOrder[]
-): OperationalSummary {
-  const todayIst = getIstDateString();
-
-  let totalToday = 0;
-  let pending = 0;
-  let accepted = 0;
-  let preparing = 0;
-  let readyForPickup = 0;
-  let completed = 0;
-  let cancelledOrRejected = 0;
-
-  for (const order of orders) {
-    const isToday =
-      getIstDateString(order.requested_pickup_at) === todayIst ||
-      getIstDateString(order.created_at) === todayIst;
-
-    if (isToday) {
-      totalToday++;
-    }
-
-    switch (order.status) {
-      case "PENDING":
-        pending++;
-        break;
-      case "ACCEPTED":
-        accepted++;
-        break;
-      case "PREPARING":
-        preparing++;
-        break;
-      case "READY_FOR_PICKUP":
-        readyForPickup++;
-        break;
-      case "COMPLETED":
-        if (isToday) completed++;
-        break;
-      case "CANCELLED":
-      case "REJECTED":
-      case "NO_SHOW":
-        if (isToday) cancelledOrRejected++;
-        break;
-    }
-  }
-
-  return {
-    totalToday,
-    pending,
-    accepted,
-    preparing,
-    readyForPickup,
-    completed,
-    cancelledOrRejected,
-  };
-}
+export { calculateOperationalSummary } from "./summary";
 
 /**
  * Fetches recent custom cake enquiries for the staff dashboard using the authenticated staff session.

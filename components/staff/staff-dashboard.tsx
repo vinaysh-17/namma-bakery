@@ -27,11 +27,13 @@ import type {
   CustomCakeRequest,
   CustomCakeOperationalSummary,
 } from "@/lib/custom-cake/types";
-import { Coffee, ShoppingBag, Sparkles } from "lucide-react";
+import { Coffee, ShoppingBag, Sparkles, CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { NotificationsProvider } from "@/components/notifications/notifications-context";
 import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
 import type { PortalNotification } from "@/lib/notifications/types";
+import { getIstDateString, formatIstDate } from "@/lib/utils/date";
+import { calculateOperationalSummary } from "@/lib/staff/summary";
 
 interface StaffDashboardProps {
   orders: StaffOrder[];
@@ -46,7 +48,6 @@ interface StaffDashboardProps {
 
 export function StaffDashboard({
   orders,
-  summary,
   customCakeRequests,
   customCakeSummary,
   userEmail,
@@ -62,13 +63,44 @@ export function StaffDashboard({
   );
 
   // Orders queue state
+  const todayIst = React.useMemo(() => getIstDateString(), []);
+  const [selectedDate, setSelectedDate] = React.useState<string>(todayIst);
   const [activeOrderFilter, setActiveOrderFilter] =
-    React.useState<OrderFilter>("TODAY");
+    React.useState<OrderFilter>("ALL");
   const [selectedOrderId, setSelectedOrderId] = React.useState<string | null>(
     orders[0]?.id || null
   );
   const [activeOrderModal, setActiveOrderModal] =
     React.useState<ModalType | null>(null);
+
+  // Date navigation helpers
+  const handlePrevDay = () => {
+    const [y, m, d] = selectedDate.split("-").map(Number);
+    const prev = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0));
+    setSelectedDate(prev.toISOString().slice(0, 10));
+  };
+
+  const handleNextDay = () => {
+    const [y, m, d] = selectedDate.split("-").map(Number);
+    const next = new Date(Date.UTC(y, m - 1, d + 1, 12, 0, 0));
+    setSelectedDate(next.toISOString().slice(0, 10));
+  };
+
+  const handleToday = () => {
+    setSelectedDate(todayIst);
+  };
+
+  // Filter orders for the selected date
+  const ordersForSelectedDate = React.useMemo(() => {
+    return orders.filter(
+      (o) => getIstDateString(o.created_at) === selectedDate
+    );
+  }, [orders, selectedDate]);
+
+  // Operational summary for the selected date
+  const summaryForSelectedDate = React.useMemo(() => {
+    return calculateOperationalSummary(orders, selectedDate);
+  }, [orders, selectedDate]);
 
   // Custom cake queue state
   const [activeCustomCakeFilter, setActiveCustomCakeFilter] =
@@ -98,8 +130,15 @@ export function StaffDashboard({
       } else if (tabParam === "ORDERS" || orderIdParam) {
         setActiveTab("ORDERS");
         if (orderIdParam) {
-          setSelectedOrderId(orderIdParam);
-          setActiveOrderFilter("ALL");
+          const match = orders.find((o) => o.id === orderIdParam);
+          if (match) {
+            setSelectedDate(getIstDateString(match.created_at));
+            setSelectedOrderId(match.id);
+            setActiveOrderFilter("ALL");
+          } else {
+            setSelectedOrderId(orderIdParam);
+            setActiveOrderFilter("ALL");
+          }
         }
       }
     }
@@ -107,7 +146,7 @@ export function StaffDashboard({
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, []);
+  }, [orders]);
 
   // User-scoped unread custom cake tracking
   const storageKey = React.useMemo(() => {
@@ -160,10 +199,15 @@ export function StaffDashboard({
     return latestTime > lastSeenTimestamp;
   }, [activeTab, lastSeenTimestamp, customCakeRequests]);
 
-  // Sync selected order objects
+  // Sync selected order objects scoped to the active date
   const selectedOrder = React.useMemo(() => {
-    return orders.find((o) => o.id === selectedOrderId) || null;
-  }, [orders, selectedOrderId]);
+    if (!ordersForSelectedDate.length) return null;
+    return (
+      ordersForSelectedDate.find((o) => o.id === selectedOrderId) ||
+      ordersForSelectedDate[0] ||
+      null
+    );
+  }, [ordersForSelectedDate, selectedOrderId]);
 
   const selectedCustomCake = React.useMemo(() => {
     return (
@@ -289,11 +333,66 @@ export function StaffDashboard({
         {/* VIEW 1: REGULAR ORDERS QUEUE */}
         {activeTab === "ORDERS" && (
           <div className="space-y-6">
+            {/* Date-Based Order History Toolbar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-sm border border-border bg-card">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="size-4 text-caramel shrink-0" />
+                <span className="text-xs font-semibold text-foreground">Order Date:</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handlePrevDay}
+                    title="Previous Day"
+                    aria-label="Previous Day"
+                    className="h-8 w-8 rounded-sm border border-border bg-background text-foreground hover:bg-muted flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </button>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      if (e.target.value) setSelectedDate(e.target.value);
+                    }}
+                    className="h-8 px-2.5 rounded-sm border border-border bg-background text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-caramel cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleNextDay}
+                    title="Next Day"
+                    aria-label="Next Day"
+                    className="h-8 w-8 rounded-sm border border-border bg-background text-foreground hover:bg-muted flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <ChevronRight className="size-4" />
+                  </button>
+                </div>
+                {selectedDate !== todayIst && (
+                  <button
+                    type="button"
+                    onClick={handleToday}
+                    className="h-8 px-2.5 rounded-sm border border-caramel/40 bg-caramel/10 text-caramel hover:bg-caramel/20 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Jump to Today
+                  </button>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Showing orders created on <strong className="text-foreground">{formatIstDate(selectedDate)}</strong>
+                {selectedDate === todayIst && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
+                    Today
+                  </span>
+                )}
+              </div>
+            </div>
+
             <section aria-label="Operational Overview">
               <StaffOverview
-                summary={summary}
+                summary={summaryForSelectedDate}
                 activeFilter={activeOrderFilter}
                 onSelectFilter={setActiveOrderFilter}
+                selectedDate={selectedDate}
+                todayIst={todayIst}
               />
             </section>
 
@@ -307,8 +406,8 @@ export function StaffDashboard({
                 }`}
               >
                 <StaffOrderList
-                  orders={orders}
-                  selectedOrderId={selectedOrderId}
+                  orders={ordersForSelectedDate}
+                  selectedOrderId={selectedOrder?.id || null}
                   activeFilter={activeOrderFilter}
                   onSelectOrder={(order) => setSelectedOrderId(order.id)}
                   onSelectFilter={setActiveOrderFilter}
