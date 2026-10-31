@@ -139,6 +139,26 @@ export async function transitionOrderAction(params: {
     }
 
     const supabase = await createClient();
+
+    // If order is currently in ACCEPTED and moving to READY_FOR_PICKUP,
+    // transition through PREPARING first to satisfy database constraints safely.
+    if (params.toStatus === "READY_FOR_PICKUP") {
+      const { data: currentOrder } = await supabase
+        .from("orders")
+        .select("status")
+        .eq("id", params.orderId)
+        .maybeSingle();
+
+      if (currentOrder?.status === "ACCEPTED") {
+        await supabase.rpc("transition_order", {
+          p_order_id: params.orderId,
+          p_to: "PREPARING",
+          p_note: "Order confirmed and moved to preparation",
+          p_estimated_ready_at: null,
+        });
+      }
+    }
+
     const { error } = await supabase.rpc("transition_order", {
       p_order_id: params.orderId,
       p_to: params.toStatus,

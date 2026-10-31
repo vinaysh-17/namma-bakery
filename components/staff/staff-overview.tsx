@@ -5,7 +5,6 @@ import {
   CalendarDays,
   Clock,
   CheckCircle2,
-  ChefHat,
   ShoppingBag,
   CheckCheck,
   XCircle,
@@ -16,17 +15,23 @@ interface StaffOverviewProps {
   summary: OperationalSummary;
   activeFilter: OrderFilter;
   onSelectFilter: (filter: OrderFilter) => void;
+  selectedDate?: string;
+  todayIst?: string;
 }
 
 export function StaffOverview({
   summary,
   activeFilter,
   onSelectFilter,
+  selectedDate,
+  todayIst,
 }: StaffOverviewProps) {
+  const isToday = !selectedDate || !todayIst || selectedDate === todayIst;
+
   const cards = [
     {
       id: "TODAY" as OrderFilter,
-      label: "Today's Orders",
+      label: isToday ? "Today's Orders" : "Selected Date Orders",
       count: summary.totalToday,
       icon: CalendarDays,
       color: "text-foreground",
@@ -48,14 +53,6 @@ export function StaffOverview({
       icon: CheckCircle2,
       color: "text-blue-700 dark:text-blue-400",
       activeBg: "border-blue-600 bg-blue-500/10",
-    },
-    {
-      id: "PREPARING" as OrderFilter,
-      label: "Preparing",
-      count: summary.preparing,
-      icon: ChefHat,
-      color: "text-orange-700 dark:text-orange-400",
-      activeBg: "border-orange-600 bg-orange-500/10",
     },
     {
       id: "READY_FOR_PICKUP" as OrderFilter,
@@ -85,7 +82,7 @@ export function StaffOverview({
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
       {cards.map((card) => {
         const Icon = card.icon;
         const isActive = activeFilter === card.id;

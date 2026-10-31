@@ -37,12 +37,7 @@ const STATUS_STEPS: Array<{
   {
     key: "ACCEPTED",
     label: "Confirmed",
-    description: "Scheduled for baking",
-  },
-  {
-    key: "PREPARING",
-    label: "Preparing Fresh",
-    description: "Baking & decorating",
+    description: "Accepted & scheduled for baking",
   },
   {
     key: "READY_FOR_PICKUP",
@@ -61,13 +56,12 @@ function getStepIndex(status: OrderStatus): number {
     case "PENDING":
       return 0;
     case "ACCEPTED":
-      return 1;
     case "PREPARING":
-      return 2;
+      return 1;
     case "READY_FOR_PICKUP":
-      return 3;
+      return 2;
     case "COMPLETED":
-      return 4;
+      return 3;
     default:
       return -1;
   }
@@ -202,7 +196,7 @@ export function OrderTrackingView({
               {STATUS_STEPS.map((step, idx) => {
                 const isPassed = stepIndex >= idx;
                 const isCurrent = stepIndex === idx;
-                const isCompleted = stepIndex > idx || (stepIndex === 4 && idx === 4);
+                const isCompleted = stepIndex > idx || (stepIndex === 3 && idx === 3);
                 const isLast = idx === STATUS_STEPS.length - 1;
 
                 return (
@@ -291,7 +285,7 @@ export function OrderTrackingView({
             </ol>
 
             {/* Desktop / Tablet Horizontal Grid (>= 768px) */}
-            <div className="hidden md:grid md:grid-cols-5 md:gap-2">
+            <div className="hidden md:grid md:grid-cols-4 md:gap-3">
               {STATUS_STEPS.map((step, idx) => {
                 const isPassed = stepIndex >= idx;
                 const isCurrent = stepIndex === idx;

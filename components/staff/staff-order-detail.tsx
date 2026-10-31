@@ -29,7 +29,6 @@ interface StaffOrderDetailProps {
 
 export function StaffOrderDetail({
   order,
-  role,
   onClose,
   onOpenModal,
 }: StaffOrderDetailProps) {
@@ -37,8 +36,6 @@ export function StaffOrderDetail({
   const [isAddingNote, setIsAddingNote] = React.useState(false);
   const [noteError, setNoteError] = React.useState<string | null>(null);
   const [isExpanded, setIsExpanded] = React.useState(false);
-
-  const isAdmin = role === "ADMIN";
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,43 +142,22 @@ export function StaffOrderDetail({
               </>
             )}
 
-            {order.status === "ACCEPTED" && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "START_PREPARING", order })}
-                  className="h-9 px-3 rounded-sm bg-orange-700 text-white text-xs font-semibold hover:bg-orange-800"
-                >
-                  Start Preparing
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "CANCEL", order })}
-                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10"
-                >
-                  Cancel Order
-                </button>
-              </>
-            )}
-
-            {order.status === "PREPARING" && (
+            {(order.status === "ACCEPTED" || order.status === "PREPARING") && (
               <>
                 <button
                   type="button"
                   onClick={() => onOpenModal({ type: "READY", order })}
-                  className="h-9 px-3 rounded-sm bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800"
+                  className="h-9 px-3 rounded-sm bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 cursor-pointer"
                 >
                   Mark Ready for Pickup
                 </button>
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenModal({ type: "CANCEL", order })}
-                    className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10"
-                  >
-                    Admin Cancel
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onOpenModal({ type: "CANCEL", order })}
+                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
+                >
+                  Cancel Order
+                </button>
               </>
             )}
 
