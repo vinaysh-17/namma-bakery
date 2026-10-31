@@ -117,21 +117,16 @@ function CakeProductCard({ product }: { product: Product }) {
       </div>
 
       {/* Meta Footer */}
-      <div className="px-4 pb-4 pt-2 flex items-center justify-between border-t border-border/60 text-xs text-muted-foreground">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
-          {product.category?.name ?? "Celebration Cake"}
-        </span>
-        <div className="text-right">
-          {formattedPrice ? (
-            <span className="font-heading text-sm font-semibold text-foreground">
-              {showFromPrice ? `From ${formattedPrice}` : formattedPrice}
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground italic">
-              Ask in store
-            </span>
-          )}
-        </div>
+      <div className="px-4 pb-4 pt-2 flex items-center border-t border-border/60 text-xs text-muted-foreground">
+        {formattedPrice ? (
+          <span className="font-heading text-sm font-semibold text-foreground">
+            {showFromPrice ? `From ${formattedPrice}` : formattedPrice}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">
+            Ask in store
+          </span>
+        )}
       </div>
     </Link>
   );
