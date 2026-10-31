@@ -20,7 +20,7 @@ import {
   markNotificationAsReadAction,
   markAllNotificationsAsReadAction,
 } from "@/lib/notifications/actions";
-import { playNotificationSound } from "@/lib/notifications/audio";
+import { playNotificationSound, primeNotificationAudio } from "@/lib/notifications/audio";
 import type { PortalNotification } from "@/lib/notifications/types";
 
 interface NotificationContextValue {
@@ -114,6 +114,22 @@ export function NotificationsProvider({
       return merged;
     });
   }, [initialNotifications]);
+
+  // Unlock audio on the first user gesture (browser autoplay policy). Without prior
+  // interaction a realtime chime cannot play; this never tries to bypass that.
+  useEffect(() => {
+    const unlock = () => {
+      primeNotificationAudio();
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   // Toggle Mute
   const toggleMute = useCallback(() => {

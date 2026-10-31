@@ -25,6 +25,25 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
+/**
+ * Browsers block audio until the user has interacted with the page. Call this from a
+ * real user gesture (click / key press) so the AudioContext is created and resumed
+ * while that permission exists; later notification chimes can then play. This does not
+ * bypass autoplay policy — if the user never interacts, the chime stays silent.
+ */
+export function primeNotificationAudio(): void {
+  try {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === "suspended") {
+      ctx.resume().catch(() => {
+        // Still blocked; will retry on the next gesture
+      });
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function playNotificationSound(): void {
   try {
     const ctx = getAudioContext();
