@@ -193,7 +193,7 @@ export function CheckoutForm() {
   const isPickupValid = Boolean(pickupDate && pickupSlot);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+    <div className="mx-auto max-w-6xl px-4 pt-3 pb-8 sm:px-6 sm:pt-4 sm:pb-12">
       {/* Navigation */}
       <nav aria-label="Breadcrumb" className="mb-6 flex items-center gap-2 text-xs text-muted-foreground">
         <Link
