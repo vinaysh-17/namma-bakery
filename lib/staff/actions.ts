@@ -132,7 +132,7 @@ export async function transitionOrderAction(params: {
   toStatus: OrderStatus;
   note?: string;
   estimatedReadyAt?: string | null;
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<{ success: boolean; error?: string; stale?: boolean }> {
   try {
     const session = await requireStaffSession();
     if (!session.isStaff) {
@@ -141,22 +141,43 @@ export async function transitionOrderAction(params: {
 
     const supabase = await createClient();
 
-    // If order is currently in ACCEPTED and moving to READY_FOR_PICKUP,
-    // transition through PREPARING first to satisfy database constraints safely.
-    if (params.toStatus === "READY_FOR_PICKUP") {
-      const { data: currentOrder } = await supabase
-        .from("orders")
-        .select("status")
-        .eq("id", params.orderId)
-        .maybeSingle();
+    // The persisted status is the source of truth (the screen can be out of date, e.g. a
+    // double submit, a second tab or another staff member already moved the order).
+    const { data: currentOrder } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", params.orderId)
+      .maybeSingle();
+    const currentStatus = currentOrder?.status as OrderStatus | undefined;
 
-      if (currentOrder?.status === "ACCEPTED") {
-        await supabase.rpc("transition_order", {
-          p_order_id: params.orderId,
-          p_to: "PREPARING",
-          p_note: "Order confirmed and moved to preparation",
-          p_estimated_ready_at: null,
-        });
+    // Idempotent: the order is already in the requested state (duplicate request). Nothing
+    // to do and nothing to record twice.
+    if (currentStatus && currentStatus === params.toStatus) {
+      revalidatePath("/staff");
+      return { success: true };
+    }
+
+    // The approved flow is ACCEPTED -> READY_FOR_PICKUP for staff; the database models it
+    // as ACCEPTED -> PREPARING -> READY_FOR_PICKUP, so run the intermediate step first.
+    // Its failure must be reported (not swallowed), otherwise the second step fails with a
+    // misleading "invalid transition ACCEPTED -> READY_FOR_PICKUP".
+    if (params.toStatus === "READY_FOR_PICKUP" && currentStatus === "ACCEPTED") {
+      const { error: prepError } = await supabase.rpc("transition_order", {
+        p_order_id: params.orderId,
+        p_to: "PREPARING",
+        p_note: "Order confirmed and moved to preparation",
+        p_estimated_ready_at: null,
+      });
+      if (prepError) {
+        console.error("[transitionOrderAction] Preparing step failed:", prepError.message);
+        const stale = prepError.message.includes("INVALID_TRANSITION");
+        return {
+          success: false,
+          stale,
+          error: stale
+            ? "This order was just updated elsewhere. The list has been refreshed - please review its current status."
+            : "Failed to update order status. Please review details and try again.",
+        };
       }
     }
 
@@ -200,8 +221,11 @@ export async function transitionOrderAction(params: {
         };
       }
       if (error.message.includes("INVALID_TRANSITION")) {
+        // Log the real from -> to so a genuine workflow problem is diagnosable
+        console.error("[transitionOrderAction] Invalid transition:", error.message);
         return {
           success: false,
+          stale: true,
           error: "Invalid status transition. Orders must follow the approved workflow.",
         };
       }

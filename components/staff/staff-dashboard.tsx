@@ -672,6 +672,7 @@ export function StaffDashboard({
           modal={activeOrderModal}
           onClose={() => setActiveOrderModal(null)}
           onSuccess={handleActionSuccess}
+          onStale={() => router.refresh()}
         />
 
         {/* Custom cake: accept / reject a pending request */}
