@@ -3,6 +3,8 @@ import Link from "next/link";
 import { AlertCircle, ShoppingBag } from "lucide-react";
 import { getOrderByToken } from "@/lib/orders/queries";
 import { OrderTrackingView } from "@/components/orders/order-tracking-view";
+import { LiveRefresh } from "@/components/realtime/live-refresh";
+import { orderTopic } from "@/lib/realtime/broadcast";
 
 export const instant = false;
 
@@ -83,6 +85,7 @@ export default async function OrderDetailsPage({
 
   return (
     <div className="min-h-screen bg-background">
+      <LiveRefresh topic={orderTopic(order.order_number)} />
       <OrderTrackingView
         order={order}
         isFreshConfirmation={confirmed === "true"}

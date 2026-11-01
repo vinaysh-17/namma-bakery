@@ -27,6 +27,7 @@ import {
   logoutCustomCakeTrackingAction,
 } from "@/lib/custom-cake/tracking-actions";
 import { formatIstDate, formatIstTime } from "@/lib/utils/date";
+import { useBroadcastPing } from "@/components/realtime/use-broadcast-ping";
 
 interface CustomCakeTrackingDashboardProps {
   initialAuthenticated?: boolean;
@@ -119,6 +120,23 @@ export function CustomCakeTrackingDashboard({
       setIsVerifying(false);
     }
   };
+
+  // Live updates: when staff change one of these enquiries, re-fetch silently (no spinner,
+  // no page reload; the open/expanded cards and form state are preserved).
+  const liveTopics = React.useMemo(
+    () => enquiries.map((e) => e.live_topic).filter((t): t is string => Boolean(t)),
+    [enquiries]
+  );
+  useBroadcastPing(isAuthenticated ? liveTopics : [], async () => {
+    try {
+      const result = await getCustomCakeDashboardAction();
+      if (result.authenticated && result.enquiries) {
+        setEnquiries(result.enquiries);
+      }
+    } catch (err) {
+      console.error("[CustomCakeTrackingDashboard] Live refresh failed:", err);
+    }
+  });
 
   // Refresh dashboard status
   const handleRefresh = async () => {

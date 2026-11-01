@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { StaffHeader } from "./staff-header";
 import { StaffOverview } from "./staff-overview";
 import { StaffDateNavigator } from "./staff-date-navigator";
+import { LiveRefresh } from "@/components/realtime/live-refresh";
 import { StaffOrderList } from "./staff-order-list";
 import { StaffOrderDetail } from "./staff-order-detail";
 import { StaffStatusModal, type ModalType } from "./staff-status-modal";
@@ -46,6 +47,8 @@ interface StaffDashboardProps {
   role: StaffRole | null;
   initialNotifications?: PortalNotification[];
   initialUnreadCount?: number;
+  /** Realtime ping topic: other staff / customer activity triggers a soft data refresh */
+  liveTopic?: string;
 }
 
 export function StaffDashboard({
@@ -55,6 +58,7 @@ export function StaffDashboard({
   role,
   initialNotifications = [],
   initialUnreadCount = 0,
+  liveTopic,
 }: StaffDashboardProps) {
   const router = useRouter();
 
@@ -414,6 +418,7 @@ export function StaffDashboard({
       initialUnreadCount={initialUnreadCount}
     >
       <div className="min-h-screen bg-background flex flex-col">
+        {liveTopic && <LiveRefresh topic={liveTopic} />}
         {/* Header */}
         <StaffHeader
           email={userEmail}

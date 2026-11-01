@@ -13,6 +13,7 @@ import { getPortalNotifications } from "@/lib/notifications/queries";
 import { StaffDashboard } from "@/components/staff/staff-dashboard";
 import { staffSignOutAction } from "@/lib/staff/actions";
 import { maskUserEmail } from "@/lib/utils/mask";
+import { staffTopic } from "@/lib/realtime/broadcast";
 
 export const instant = false;
 
@@ -108,6 +109,7 @@ export default async function StaffPage() {
       role={session.role}
       initialNotifications={notificationsRes.notifications}
       initialUnreadCount={notificationsRes.unreadCount}
+      liveTopic={staffTopic()}
     />
   );
 }

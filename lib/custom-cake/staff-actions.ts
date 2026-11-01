@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaffSession } from "@/lib/staff/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { notifyCustomRequestChanged } from "@/lib/realtime/broadcast";
 import type { CustomCakeStatus } from "./types";
 
 /**
@@ -87,6 +88,7 @@ export async function updateCustomCakeStatusAction(params: {
     }
 
     revalidatePath("/staff");
+    await notifyCustomRequestChanged(requestId);
     return { success: true };
   } catch (err) {
     console.error("[updateCustomCakeStatusAction] Execution failure:", err);
@@ -100,7 +102,7 @@ export async function updateCustomCakeStatusAction(params: {
 /**
  * Accepts a custom cake request as an order, using the existing quote workflow end to end:
  *   staff_review_request (-> UNDER_REVIEW, if needed)
- *   -> staff_send_quote   (records the agreed price + pickup, -> QUOTED)
+ *   -> staff_send_quote   (records the agreed price + the CUSTOMER requested pickup, -> QUOTED)
  *   -> customer_accept_quote (service role; creates the linked `orders` row in ACCEPTED,
  *      with its order item, status history, and sets the request to CUSTOMER_ACCEPTED)
  *
@@ -112,7 +114,8 @@ export async function updateCustomCakeStatusAction(params: {
 export async function acceptCustomCakeAsOrderAction(params: {
   requestId: string;
   pricePaise: number;
-  confirmedPickupAt: string;
+  /** Optional staff-confirmed pickup/ready time (ISO). Empty => customer's requested pickup. */
+  confirmedPickupAt?: string | null;
   note?: string;
 }): Promise<{ success: boolean; error?: string; orderNumber?: string }> {
   try {
@@ -129,15 +132,10 @@ export async function acceptCustomCakeAsOrderAction(params: {
     ) {
       return { success: false, error: "Enter a valid agreed price." };
     }
-    const pickup = new Date(confirmedPickupAt);
-    if (Number.isNaN(pickup.getTime()) || pickup.getTime() <= Date.now()) {
-      return { success: false, error: "Pickup time must be in the future." };
-    }
-
     const supabase = await createClient();
     const { data: request, error: fetchError } = await supabase
       .from("custom_cake_requests")
-      .select("id, status, public_token")
+      .select("id, status, public_token, preferred_pickup_at")
       .eq("id", requestId)
       .maybeSingle();
 
@@ -155,9 +153,35 @@ export async function acceptCustomCakeAsOrderAction(params: {
       return { success: false, error: "This request can no longer be accepted." };
     }
 
-    const mapError = (message: string): string => {
+    // Schedule: use the staff-confirmed time only when provided; otherwise keep the
+    // customer's requested pickup. No default or invented time is ever substituted.
+    const staffConfirmed = confirmedPickupAt?.trim()
+      ? new Date(confirmedPickupAt)
+      : null;
+    if (staffConfirmed && Number.isNaN(staffConfirmed.getTime())) {
+      return { success: false, error: "The confirmed pickup time is not valid." };
+    }
+    const pickup = staffConfirmed ?? new Date(request.preferred_pickup_at);
+    if (Number.isNaN(pickup.getTime())) {
+      return { success: false, error: "This request has no valid pickup time." };
+    }
+    if (pickup.getTime() <= Date.now()) {
+      return {
+        success: false,
+        error: staffConfirmed
+          ? "The confirmed pickup time must be in the future."
+          : "The customer's requested pickup time has already passed. Enter a new Confirmed Pickup / Ready Time to accept this request.",
+      };
+    }
+
+    const mapError = (message: string, code?: string): string => {
+      // 42702 = ambiguous column reference inside customer_accept_quote (fixed by
+      // migration 0010). Say so explicitly instead of a generic failure.
+      if (code === "42702" || message.includes("is ambiguous")) {
+        return "Database migration 0010 (customer_accept_quote fix) has not been applied. Run supabase/migrations/0010_fix_customer_accept_quote_ambiguity.sql in the Supabase SQL editor, then try again.";
+      }
       if (message.includes("PICKUP_BEFORE_READY")) {
-        return "Pickup time must be in the future.";
+        return "The pickup time must be in the future.";
       }
       if (message.includes("INVALID_PRICE")) return "Enter a valid agreed price.";
       if (message.includes("DAY_FULL")) {
@@ -166,7 +190,7 @@ export async function acceptCustomCakeAsOrderAction(params: {
       if (message.includes("INVALID_TRANSITION")) {
         return "This request can no longer be accepted.";
       }
-      return "Failed to accept this request. Please try again.";
+      return `Failed to accept this request (database error${code ? " " + code : ""}). Please try again.`;
     };
 
     if (request.status === "SUBMITTED") {
@@ -177,7 +201,7 @@ export async function acceptCustomCakeAsOrderAction(params: {
       });
       if (error) {
         console.error("[acceptCustomCakeAsOrderAction] review error:", error.message);
-        return { success: false, error: mapError(error.message) };
+        return { success: false, error: mapError(error.message, error.code) };
       }
     }
 
@@ -190,7 +214,7 @@ export async function acceptCustomCakeAsOrderAction(params: {
     });
     if (quoteError) {
       console.error("[acceptCustomCakeAsOrderAction] quote error:", quoteError.message);
-      return { success: false, error: mapError(quoteError.message) };
+      return { success: false, error: mapError(quoteError.message, quoteError.code) };
     }
 
     const adminClient = createAdminClient();
@@ -200,10 +224,11 @@ export async function acceptCustomCakeAsOrderAction(params: {
     );
     if (acceptError) {
       console.error("[acceptCustomCakeAsOrderAction] accept error:", acceptError.message);
-      return { success: false, error: mapError(acceptError.message) };
+      return { success: false, error: mapError(acceptError.message, acceptError.code) };
     }
 
     revalidatePath("/staff");
+    await notifyCustomRequestChanged(requestId);
     const row = Array.isArray(accepted) ? accepted[0] : accepted;
     return { success: true, orderNumber: row?.order_number };
   } catch (err) {
@@ -248,6 +273,7 @@ export async function addCustomCakeStaffNoteAction(params: {
     }
 
     revalidatePath("/staff");
+    await notifyCustomRequestChanged(params.requestId);
     return { success: true };
   } catch (err) {
     console.error("[addCustomCakeStaffNoteAction] Execution failure:", err);
@@ -267,13 +293,24 @@ export async function getCustomCakeSignedUrlAction(
       return { success: false, error: "Unauthorized: Staff privileges required." };
     }
 
-    if (
-      !storagePath ||
-      typeof storagePath !== "string" ||
-      !storagePath.startsWith("requests/") ||
-      storagePath.includes("..")
-    ) {
+    const validPath =
+      typeof storagePath === "string" &&
+      /^requests\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/.test(storagePath);
+    if (!validPath) {
       return { success: false, error: "Invalid reference image path." };
+    }
+
+    // Authorise against the database with the caller's own (RLS-scoped) session: the
+    // image must belong to a custom cake request this staff/admin user can read. Only
+    // then is a short-lived signed URL issued with the service role (bucket stays private).
+    const supabase = await createClient();
+    const { data: imageRow } = await supabase
+      .from("custom_cake_images")
+      .select("id")
+      .eq("storage_path", storagePath)
+      .maybeSingle();
+    if (!imageRow) {
+      return { success: false, error: "Reference image not found." };
     }
 
     const adminClient = createAdminClient();

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { notifyOrderChanged } from "@/lib/realtime/broadcast";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import { requireStaffSession } from "./auth";
 import type { OrderStatus } from "@/lib/orders/types";
@@ -217,6 +218,7 @@ export async function transitionOrderAction(params: {
     }
 
     revalidatePath("/staff");
+    await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
     console.error("[transitionOrderAction] Execution failure:", err);
@@ -300,6 +302,7 @@ export async function completeOrderAndRecordPaymentAction(params: {
     }
 
     revalidatePath("/staff");
+    await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
     console.error("[completeOrderAndRecordPaymentAction] Execution failure:", err);
@@ -347,6 +350,7 @@ export async function recordStorePaymentAction(params: {
     }
 
     revalidatePath("/staff");
+    await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
     console.error("[recordStorePaymentAction] Execution failure:", err);

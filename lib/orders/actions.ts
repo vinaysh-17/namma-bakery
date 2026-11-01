@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { notifyStaffChanged } from "@/lib/realtime/broadcast";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import {
   placeOrderInputSchema,
@@ -277,6 +278,7 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
       };
     }
 
+    await notifyStaffChanged();
     return {
       success: true,
       orderId: row.order_id,

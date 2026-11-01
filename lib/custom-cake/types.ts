@@ -111,6 +111,8 @@ export interface CustomCakeTrackingItem {
   id: string;
   request_number: string;
   public_token: string;
+  /** Unguessable realtime ping topic for this enquiry (server-derived) */
+  live_topic?: string;
   customer_name: string;
   status: CustomCakeStatus;
   flavour: string;

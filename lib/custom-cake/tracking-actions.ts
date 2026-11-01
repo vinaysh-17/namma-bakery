@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { customRequestTopic } from "@/lib/realtime/broadcast";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import { customCakeTrackingInputSchema } from "./validation";
 import {
@@ -104,6 +105,7 @@ async function mapEnquiryRows(
       id: row.id,
       request_number: row.request_number,
       public_token: row.public_token,
+      live_topic: customRequestTopic(row.id),
       customer_name: row.customer_name,
       status: row.status,
       flavour: row.flavour,

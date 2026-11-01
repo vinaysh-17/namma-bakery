@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { notifyStaffChanged } from "@/lib/realtime/broadcast";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import {
@@ -246,6 +247,8 @@ export async function submitCustomCakeRequestAction(
         // Do not fail the whole enquiry if only the image upload errored
       }
     }
+
+    await notifyStaffChanged();
 
     return {
       success: true,
