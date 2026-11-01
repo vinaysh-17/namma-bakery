@@ -11,6 +11,7 @@ import {
   Send,
   Loader2,
   ExternalLink,
+  Image as ImageIcon,
 } from "lucide-react";
 import type { CustomCakeRequest } from "@/lib/custom-cake/types";
 import type { StaffOrder } from "@/lib/staff/types";
@@ -42,40 +43,84 @@ interface StaffCustomCakeDetailProps {
   onOpenModal: (modal: CustomCakeModalType) => void;
   /** Order-stage dialogs (ready, collect payment & handover, cancel) on the linked order */
   onOpenOrderModal: (modal: ModalType) => void;
+  /** Changes each time staff click "Photo Attached" on this request's card */
+  photoFocusNonce?: number;
 }
+
+/**
+ * Page-session cache for reference photos, keyed by storage path (unique per request).
+ * Successfully loaded signed URLs are kept so collapsing/expanding the details or
+ * switching between requests never re-fetches an image that is already loaded.
+ * Nothing is preloaded: a path is only requested when its photo is actually shown.
+ * Failures are remembered too, so reopening the details does not retry repeatedly;
+ * the Retry button clears the entry and fetches again.
+ */
+const signedUrlCache = new Map<string, string>();
+const failedPaths = new Set<string>();
+const inFlightLoads = new Map<string, Promise<string | null>>();
+
+function loadReferenceUrl(storagePath: string): Promise<string | null> {
+  const cached = signedUrlCache.get(storagePath);
+  if (cached) return Promise.resolve(cached);
+  if (failedPaths.has(storagePath)) return Promise.resolve(null);
+
+  const pending = inFlightLoads.get(storagePath);
+  if (pending) return pending;
+
+  const load = getCustomCakeSignedUrlAction(storagePath)
+    .then((res) => {
+      if (res.success && res.signedUrl) {
+        signedUrlCache.set(storagePath, res.signedUrl);
+        return res.signedUrl;
+      }
+      failedPaths.add(storagePath);
+      return null;
+    })
+    .catch(() => {
+      failedPaths.add(storagePath);
+      return null;
+    })
+    .finally(() => {
+      inFlightLoads.delete(storagePath);
+    });
+  inFlightLoads.set(storagePath, load);
+  return load;
+}
+
+type ReferenceImageState =
+  | { status: "loading" }
+  | { status: "ready"; url: string }
+  | { status: "error" };
 
 /**
  * One customer reference photo. The bucket is private, so the image is fetched through a
  * short-lived signed URL issued only to authorised staff/admin (verified server-side).
  */
 function ReferenceImage({ storagePath }: { storagePath: string }) {
-  const [state, setState] = React.useState<
-    { status: "loading" } | { status: "ready"; url: string } | { status: "error" }
-  >({ status: "loading" });
-  const [attempt, setAttempt] = React.useState(0);
+  const [state, setState] = React.useState<ReferenceImageState>(() => {
+    const cached = signedUrlCache.get(storagePath);
+    if (cached) return { status: "ready", url: cached };
+    if (failedPaths.has(storagePath)) return { status: "error" };
+    return { status: "loading" };
+  });
 
   React.useEffect(() => {
+    if (state.status !== "loading") return;
     let isMounted = true;
-    getCustomCakeSignedUrlAction(storagePath)
-      .then((res) => {
-        if (!isMounted) return;
-        setState(
-          res.success && res.signedUrl
-            ? { status: "ready", url: res.signedUrl }
-            : { status: "error" }
-        );
-      })
-      .catch(() => {
-        if (isMounted) setState({ status: "error" });
-      });
+    loadReferenceUrl(storagePath).then((url) => {
+      if (isMounted) {
+        setState(url ? { status: "ready", url } : { status: "error" });
+      }
+    });
     return () => {
       isMounted = false;
     };
-  }, [storagePath, attempt]);
+  }, [storagePath, state.status]);
 
   const retry = () => {
+    signedUrlCache.delete(storagePath);
+    failedPaths.delete(storagePath);
     setState({ status: "loading" });
-    setAttempt((n) => n + 1);
   };
 
   if (state.status === "loading") {
@@ -109,7 +154,12 @@ function ReferenceImage({ storagePath }: { storagePath: string }) {
         <img
           src={state.url}
           alt="Customer cake reference"
-          onError={() => setState({ status: "error" })}
+          onError={() => {
+            // Likely an expired signed URL: drop it and show the retry state once
+            signedUrlCache.delete(storagePath);
+            failedPaths.add(storagePath);
+            setState({ status: "error" });
+          }}
           className="max-h-56 w-auto object-contain rounded-xs border border-border mx-auto"
         />
       </a>
@@ -133,11 +183,35 @@ export function StaffCustomCakeDetail({
   onClose,
   onOpenModal,
   onOpenOrderModal,
+  photoFocusNonce = 0,
 }: StaffCustomCakeDetailProps) {
   const [internalNoteInput, setInternalNoteInput] = React.useState("");
   const [isAddingNote, setIsAddingNote] = React.useState(false);
   const [noteError, setNoteError] = React.useState<string | null>(null);
   const [isExpanded, setIsExpanded] = React.useState(false);
+  const photoSectionRef = React.useRef<HTMLDivElement>(null);
+  // Bumped whenever the reference photo should be scrolled into view
+  const [photoScrollTick, setPhotoScrollTick] = React.useState(0);
+  const [handledPhotoNonce, setHandledPhotoNonce] = React.useState(0);
+
+  // "Photo Attached" was clicked on the card: make sure the details are open, then scroll
+  // to the photo (adjusted during render, keyed on the nonce, so it works whether the
+  // panel was already open or is being mounted by this very click).
+  if (photoFocusNonce !== 0 && photoFocusNonce !== handledPhotoNonce) {
+    setHandledPhotoNonce(photoFocusNonce);
+    setIsExpanded(true);
+    setPhotoScrollTick((t) => t + 1);
+  }
+
+  React.useEffect(() => {
+    if (photoScrollTick === 0) return;
+    photoSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [photoScrollTick]);
+
+  const showReferencePhoto = () => {
+    setIsExpanded(true);
+    setPhotoScrollTick((t) => t + 1);
+  };
 
   const referenceImages = request.custom_cake_images ?? [];
 
@@ -364,6 +438,18 @@ export function StaffCustomCakeDetail({
                 <span>{request.customer_email}</span>
               </div>
             )}
+            {referenceImages.length > 0 && (
+              <div className="pt-1 border-t border-border/50">
+                <button
+                  type="button"
+                  onClick={showReferencePhoto}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-caramel hover:underline cursor-pointer"
+                >
+                  <ImageIcon className="size-3.5" />
+                  <span>View Reference Photo</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -489,7 +575,7 @@ export function StaffCustomCakeDetail({
 
         {/* Reference Image Photo(s): private bucket, loaded through short-lived signed URLs */}
         {referenceImages.length > 0 && (
-          <div className="space-y-2">
+          <div ref={photoSectionRef} className="space-y-2 scroll-mt-24">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
               Customer Reference Photo
             </span>

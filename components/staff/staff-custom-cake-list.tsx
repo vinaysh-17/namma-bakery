@@ -31,6 +31,8 @@ interface StaffCustomCakeListProps {
   activeFilter: OrderFilter;
   onSelectRequest: (request: CustomCakeRequest | null) => void;
   onSelectFilter: (filter: OrderFilter) => void;
+  /** Photo Attached badge clicked: select the request and jump to its reference photo */
+  onViewPhoto?: (request: CustomCakeRequest) => void;
 }
 
 export function StaffCustomCakeList({
@@ -40,6 +42,7 @@ export function StaffCustomCakeList({
   activeFilter,
   onSelectRequest,
   onSelectFilter,
+  onViewPhoto,
 }: StaffCustomCakeListProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -220,10 +223,20 @@ export function StaffCustomCakeList({
                         </span>
                       </span>
                       {hasPhoto && (
-                        <span className="rounded bg-caramel/10 text-caramel text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            // Stop the click so the card handler does not also run; the
+                            // dashboard selects this exact request and focuses its photo.
+                            e.stopPropagation();
+                            if (onViewPhoto) onViewPhoto(req);
+                            else onSelectRequest(req);
+                          }}
+                          className="rounded bg-caramel/10 text-caramel text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-1 cursor-pointer"
+                        >
                           <ImageIcon className="size-2.5" />
                           <span>Photo Attached</span>
-                        </span>
+                        </button>
                       )}
                       {req.message_on_cake && (
                         <span className="rounded bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-0.5 dark:bg-amber-950 dark:text-amber-300">

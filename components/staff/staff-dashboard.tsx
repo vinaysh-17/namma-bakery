@@ -101,6 +101,11 @@ export function StaffDashboard({
   const [selectedCustomCakeId, setSelectedCustomCakeId] = React.useState<
     string | null
   >(null);
+  // Set when staff click "Photo Attached": which request, and a nonce that changes per click
+  const [photoFocus, setPhotoFocus] = React.useState<{
+    id: string;
+    nonce: number;
+  } | null>(null);
   // Pending-stage dialogs (accept / reject a request)
   const [activeCustomCakeModal, setActiveCustomCakeModal] =
     React.useState<CustomCakeModalType | null>(null);
@@ -342,11 +347,21 @@ export function StaffDashboard({
   // ---- Custom cake handlers ----
   const handleCloseCustomCake = () => {
     setSelectedCustomCakeId(null);
+    setPhotoFocus(null);
     clearUrlSelection();
   };
 
   const handleSelectCustomCake = (req: CustomCakeRequest | null) => {
     setSelectedCustomCakeId(req ? req.id : null);
+    setPhotoFocus(null);
+    clearUrlSelection();
+  };
+
+  // "Photo Attached" badge: same selection as clicking the card, plus a photo-focus signal
+  const handleViewCustomCakePhoto = (req: CustomCakeRequest) => {
+    setSelectedCustomCakeId(req.id);
+    // Date.now() is unique per click, so a repeat click on the same request still fires
+    setPhotoFocus({ id: req.id, nonce: Date.now() });
     clearUrlSelection();
   };
 
@@ -624,6 +639,7 @@ export function StaffDashboard({
                     activeFilter={activeCustomCakeFilter}
                     onSelectRequest={handleSelectCustomCake}
                     onSelectFilter={handleSelectCustomCakeFilter}
+                    onViewPhoto={handleViewCustomCakePhoto}
                   />
                 </section>
 
@@ -640,6 +656,9 @@ export function StaffDashboard({
                       onClose={handleCloseCustomCake}
                       onOpenModal={(modal) => setActiveCustomCakeModal(modal)}
                       onOpenOrderModal={(modal) => setActiveCustomOrderModal(modal)}
+                      photoFocusNonce={
+                        photoFocus?.id === selectedCustomCake.id ? photoFocus.nonce : 0
+                      }
                     />
                   </aside>
                 )}
