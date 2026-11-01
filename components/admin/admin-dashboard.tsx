@@ -7,12 +7,14 @@ import {
   Package,
   Store,
   Users,
+  History,
 } from "lucide-react";
 import { AdminHeader } from "./admin-header";
 import { AdminOverviewView } from "./admin-overview-view";
 import { AdminCatalogView } from "./admin-catalog-view";
 import { AdminStoreOperationsView } from "./admin-store-operations-view";
 import { AdminStaffView } from "./admin-staff-view";
+import { OrderHistoryView } from "@/components/history/order-history-view";
 import { isStoreCurrentlyPaused } from "@/lib/utils/date";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { NotificationsProvider } from "@/components/notifications/notifications-context";
@@ -35,7 +37,8 @@ export type AdminTab =
   | "OVERVIEW"
   | "CATALOG"
   | "STORE_OPS"
-  | "STAFF";
+  | "STAFF"
+  | "ORDER_HISTORY";
 
 interface AdminDashboardProps {
   summary: AdminOverviewSummary;
@@ -128,6 +131,7 @@ export function AdminDashboard({
     { id: "CATALOG", label: "Catalog", icon: Package },
     { id: "STORE_OPS", label: "Store Operations", icon: Store },
     { id: "STAFF", label: "Staff Team", icon: Users },
+    { id: "ORDER_HISTORY", label: "Order History", icon: History },
   ];
 
   return (
@@ -216,6 +220,8 @@ export function AdminDashboard({
             onActionSuccess={handleActionSuccess}
           />
         )}
+
+        {activeTab === "ORDER_HISTORY" && <OrderHistoryView canDelete />}
       </div>
 
       {/* Live Toasts */}

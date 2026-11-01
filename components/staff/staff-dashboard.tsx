@@ -25,7 +25,8 @@ import type {
   CustomCakeRequest,
   CustomCakeOperationalSummary,
 } from "@/lib/custom-cake/types";
-import { ShoppingBag, Sparkles } from "lucide-react";
+import { ShoppingBag, Sparkles, History } from "lucide-react";
+import { OrderHistoryView } from "@/components/history/order-history-view";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { NotificationsProvider } from "@/components/notifications/notifications-context";
 import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
@@ -63,7 +64,7 @@ export function StaffDashboard({
   const router = useRouter();
 
   // Navigation tab: regular orders vs custom celebration cakes
-  const [activeTab, setActiveTab] = React.useState<"ORDERS" | "CUSTOM_CAKES">(
+  const [activeTab, setActiveTab] = React.useState<"ORDERS" | "CUSTOM_CAKES" | "ORDER_HISTORY">(
     "ORDERS"
   );
 
@@ -264,7 +265,7 @@ export function StaffDashboard({
   });
 
   // Switch tabs and mark as seen when opening Custom Cake Requests
-  const handleSelectTab = (tab: "ORDERS" | "CUSTOM_CAKES") => {
+  const handleSelectTab = (tab: "ORDERS" | "CUSTOM_CAKES" | "ORDER_HISTORY") => {
     setActiveTab(tab);
     if (tab === "CUSTOM_CAKES") {
       const now = Date.now();
@@ -503,6 +504,19 @@ export function StaffDashboard({
                     />
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectTab("ORDER_HISTORY")}
+                  className={`flex h-9 items-center gap-2 px-4 rounded-sm text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 cursor-pointer ${
+                    activeTab === "ORDER_HISTORY"
+                      ? "bg-cocoa text-cream"
+                      : "border border-border bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <History className="size-4 shrink-0" />
+                  <span>Order History</span>
+                </button>
               </div>
 
               {/* Notification Bell anchored to the far right */}
@@ -580,6 +594,9 @@ export function StaffDashboard({
               </div>
             </div>
           )}
+
+          {/* VIEW 3: ORDER HISTORY (read-only for staff; deletion lives in the admin portal) */}
+          {activeTab === "ORDER_HISTORY" && <OrderHistoryView canDelete={false} />}
 
           {/* VIEW 2: CUSTOM CAKE ENQUIRIES */}
           {activeTab === "CUSTOM_CAKES" && (
