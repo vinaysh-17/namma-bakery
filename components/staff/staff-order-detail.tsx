@@ -29,17 +29,20 @@ interface StaffOrderDetailProps {
   role: StaffRole | null;
   onClose: () => void;
   onOpenModal: (modal: ModalType) => void;
+  /** Order History: no operations and no note form (view only) */
+  readOnly?: boolean;
 }
 
 export function StaffOrderDetail({
   order,
   onClose,
   onOpenModal,
+  readOnly = false,
 }: StaffOrderDetailProps) {
   const [internalNoteInput, setInternalNoteInput] = React.useState("");
   const [isAddingNote, setIsAddingNote] = React.useState(false);
   const [noteError, setNoteError] = React.useState<string | null>(null);
-  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isExpanded, setIsExpanded] = React.useState(readOnly);
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,6 +125,7 @@ export function StaffOrderDetail({
       {/* Main Content */}
       <div className="p-4 sm:p-5 space-y-6">
         {/* Next Actions Bar */}
+        {!readOnly && (
         <div className="rounded-sm border border-border bg-background p-3.5 space-y-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
             Available Operations
@@ -209,6 +213,7 @@ export function StaffOrderDetail({
             )}
           </div>
         </div>
+        )}
 
         {/* Customer Information */}
         <div className="space-y-2">
@@ -480,6 +485,7 @@ export function StaffOrderDetail({
                   <p className="text-destructive text-xs">{noteError}</p>
                 )}
 
+                {!readOnly && (
                 <form onSubmit={handleAddNote} className="flex gap-2 pt-2 border-t border-border/60">
                   <input
                     type="text"
@@ -501,6 +507,7 @@ export function StaffOrderDetail({
                     )}
                   </button>
                 </form>
+                )}
               </div>
             </div>
 

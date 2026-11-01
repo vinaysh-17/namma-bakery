@@ -45,6 +45,8 @@ interface StaffCustomCakeDetailProps {
   onOpenOrderModal: (modal: ModalType) => void;
   /** Changes each time staff click "Photo Attached" on this request's card */
   photoFocusNonce?: number;
+  /** Order History: no operations and no note form (view only) */
+  readOnly?: boolean;
 }
 
 /**
@@ -184,11 +186,12 @@ export function StaffCustomCakeDetail({
   onOpenModal,
   onOpenOrderModal,
   photoFocusNonce = 0,
+  readOnly = false,
 }: StaffCustomCakeDetailProps) {
   const [internalNoteInput, setInternalNoteInput] = React.useState("");
   const [isAddingNote, setIsAddingNote] = React.useState(false);
   const [noteError, setNoteError] = React.useState<string | null>(null);
-  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [isExpanded, setIsExpanded] = React.useState(readOnly);
   const photoSectionRef = React.useRef<HTMLDivElement>(null);
   // Bumped whenever the reference photo should be scrolled into view
   const [photoScrollTick, setPhotoScrollTick] = React.useState(0);
@@ -278,6 +281,8 @@ export function StaffCustomCakeDetail({
       <div className="p-4 sm:p-5 space-y-6">
         {/* Next Operations Bar - same lifecycle as the Orders Queue */}
         <div className="rounded-sm border border-border bg-background p-3.5 space-y-2">
+          {!readOnly && (
+            <>
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
             Available Operations
           </span>
@@ -385,6 +390,8 @@ export function StaffCustomCakeDetail({
               </span>
             )}
           </div>
+            </>
+          )}
 
           {linkedOrder && (
             <div className="pt-2 mt-1 border-t border-border/60 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -649,6 +656,7 @@ export function StaffCustomCakeDetail({
 
             {noteError && <p className="text-destructive text-xs">{noteError}</p>}
 
+            {!readOnly && (
             <form onSubmit={handleAddNote} className="flex gap-2 pt-2 border-t border-border/60">
               <input
                 type="text"
@@ -670,6 +678,7 @@ export function StaffCustomCakeDetail({
                 )}
               </button>
             </form>
+            )}
           </div>
         </div>
 
