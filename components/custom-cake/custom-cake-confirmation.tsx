@@ -130,6 +130,15 @@ export function CustomCakeConfirmation({ request }: CustomCakeConfirmationProps)
               Track all your enquiries here &rarr;
             </Link>
           </p>
+          <p className="text-xs text-foreground font-medium">
+            Forgot your reference later?{" "}
+            <Link
+              href="/orders/find"
+              className="text-caramel hover:underline font-semibold focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+            >
+              Find My Orders &rarr;
+            </Link>
+          </p>
         </div>
       </div>
 

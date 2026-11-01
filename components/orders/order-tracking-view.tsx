@@ -134,6 +134,15 @@ export function OrderTrackingView({
             We have received your order details at Namma Bakery. Please note your order number below.
             You can bookmark this page to follow live preparation and pickup progress.
           </p>
+          <p className="mt-2 text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-200/90 sm:text-sm">
+            Save this reference for pickup and support. Forgot it later?{" "}
+            <Link
+              href="/orders/find"
+              className="font-semibold underline underline-offset-2 hover:no-underline"
+            >
+              Find My Orders
+            </Link>
+          </p>
         </div>
       )}
 
