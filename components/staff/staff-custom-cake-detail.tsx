@@ -251,7 +251,7 @@ export function StaffCustomCakeDetail({
               {request.request_number}
             </h2>
             <span
-              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(
+              className={`rounded px-2 py-0.5 text-xs font-bold tracking-wide border ${getStaffStatusBadgeClass(
                 staffStatus
               )}`}
             >

@@ -219,7 +219,7 @@ export function StaffOrderList({
                         {order.order_number}
                       </span>
                       <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStatusBadge(
+                        className={`rounded px-2 py-0.5 text-[10px] font-bold tracking-wide border ${getStatusBadge(
                           order.status
                         )}`}
                       >

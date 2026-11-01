@@ -68,9 +68,16 @@ export function formatOrderItemVariant(item: {
 export const PAYMENT_RECEIVED_HANDOVER_LABEL = "Payment received & handed over";
 
 /**
- * Human-readable label for an order status badge in staff views
- * (e.g. READY_FOR_PICKUP -> "READY FOR PICKUP", COMPLETED -> "COMPLETED").
+ * Human-readable label for an order status in staff views
+ * (e.g. READY_FOR_PICKUP -> "Ready for Pickup", COMPLETED -> "Completed").
+ * Display only - the backend/internal status value is never changed.
  */
 export function formatOrderStatusLabel(status: string): string {
-  return status.replace(/_/g, " ");
+  return status
+    .toLowerCase()
+    .split("_")
+    .map((word, i) =>
+      word === "for" && i > 0 ? word : word.charAt(0).toUpperCase() + word.slice(1)
+    )
+    .join(" ");
 }

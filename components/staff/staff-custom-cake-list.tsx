@@ -201,7 +201,7 @@ export function StaffCustomCakeList({
                         {req.request_number}
                       </span>
                       <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(
+                        className={`rounded px-2 py-0.5 text-[10px] font-bold tracking-wide border ${getStaffStatusBadgeClass(
                           staffStatus
                         )}`}
                       >

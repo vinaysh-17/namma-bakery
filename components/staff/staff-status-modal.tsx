@@ -16,6 +16,7 @@ import {
 } from "@/lib/staff/actions";
 import { formatPaise } from "@/lib/utils/money";
 import { formatIstDateTime } from "@/lib/utils/date";
+import { formatOrderStatusLabel } from "@/lib/staff/formatters";
 
 export type ModalType =
   | { type: "ACCEPT"; order: StaffOrder }
@@ -32,12 +33,15 @@ interface StaffStatusModalProps {
   modal: ModalType | null;
   onClose: () => void;
   onSuccess: (orderId?: string) => void;
+  /** The server rejected the step because the persisted status differs from the screen */
+  onStale?: () => void;
 }
 
 export function StaffStatusModal({
   modal,
   onClose,
   onSuccess,
+  onStale,
 }: StaffStatusModalProps) {
   if (!modal) return null;
 
@@ -47,6 +51,7 @@ export function StaffStatusModal({
       modal={modal}
       onClose={onClose}
       onSuccess={onSuccess}
+      onStale={onStale}
     />
   );
 }
@@ -55,10 +60,12 @@ function StaffStatusModalContent({
   modal,
   onClose,
   onSuccess,
+  onStale,
 }: {
   modal: NonNullable<ModalType>;
   onClose: () => void;
   onSuccess: (orderId?: string) => void;
+  onStale?: () => void;
 }) {
   const { order, type } = modal;
 
@@ -78,8 +85,13 @@ function StaffStatusModalContent({
   const [estimatedReadyAt, setEstimatedReadyAt] = React.useState<string>(defaultIso);
   const [reasonNote, setReasonNote] = React.useState<string>("");
 
+  // Handover is only valid once the order is ready for pickup (the server re-validates this)
+  const handoverBlocked =
+    type === "COMPLETE_AND_PAY" && order.status !== "READY_FOR_PICKUP";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (handoverBlocked) return;
     setErrorMessage(null);
     setIsSubmitting(true);
 
@@ -178,6 +190,8 @@ function StaffStatusModalContent({
       });
 
       if (!res.success) {
+        // Out-of-date screen: pull the persisted state so the next action is correct
+        if (res.stale) onStale?.();
         setErrorMessage(res.error || "Failed to update order status.");
         setIsSubmitting(false);
         return;
@@ -306,6 +320,15 @@ function StaffStatusModalContent({
           {/* COMPLETE_AND_PAY: Combined payment collection and handover */}
           {type === "COMPLETE_AND_PAY" && (
             <div className="space-y-3">
+              {handoverBlocked && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"
+                >
+                  <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                  <span>Order must be ready for pickup before completing handover.</span>
+                </div>
+              )}
               {order.payment_status !== "paid" ? (
                 <div className="rounded-sm border border-emerald-300 bg-emerald-50/60 p-4 text-center dark:bg-emerald-950/30 dark:border-emerald-800">
                   <span className="text-xs uppercase tracking-wider text-emerald-800 dark:text-emerald-300 font-semibold">
@@ -417,15 +440,17 @@ function StaffStatusModalContent({
             type === "NO_SHOW") && (
             <div className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Confirm updating status from <strong className="text-foreground">{order.status}</strong> to{" "}
+                Confirm updating status from <strong className="text-foreground">{formatOrderStatusLabel(order.status)}</strong> to{" "}
                 <strong className="text-foreground">
-                  {type === "START_PREPARING"
-                    ? "PREPARING"
-                    : type === "READY"
-                    ? "READY_FOR_PICKUP"
-                    : type === "COMPLETE"
-                    ? "COMPLETED"
-                    : "NO_SHOW"}
+                  {formatOrderStatusLabel(
+                    type === "START_PREPARING"
+                      ? "PREPARING"
+                      : type === "READY"
+                      ? "READY_FOR_PICKUP"
+                      : type === "COMPLETE"
+                      ? "COMPLETED"
+                      : "NO_SHOW"
+                  )}
                 </strong>.
               </p>
 
@@ -460,8 +485,8 @@ function StaffStatusModalContent({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer ${
+              disabled={isSubmitting || handoverBlocked}
+              className={`h-10 px-5 rounded-sm text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                 type === "REJECT" || type === "CANCEL" || type === "NO_SHOW"
                   ? "bg-destructive hover:bg-destructive/90"
                   : type === "RECORD_PAYMENT"

@@ -174,7 +174,7 @@ function StaffCustomCakeModalContent({
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
               <span>Current status:</span>
               <span
-                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${getStaffStatusBadgeClass(staffStatus)}`}
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide border ${getStaffStatusBadgeClass(staffStatus)}`}
               >
                 {formatOrderStatusLabel(staffStatus)}
               </span>

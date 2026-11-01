@@ -98,7 +98,7 @@ export function StaffOrderDetail({
               {order.order_number}
             </h2>
             <span
-              className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider border ${getStatusBadge()}`}
+              className={`rounded px-2 py-0.5 text-xs font-bold tracking-wide border ${getStatusBadge()}`}
             >
               {formatOrderStatusLabel(order.status)}
             </span>
@@ -516,7 +516,7 @@ export function StaffOrderDetail({
                       <li key={hist.id} className="ml-4 space-y-0.5">
                         <div className="absolute -left-1.5 mt-1.5 size-3 rounded-full border border-card bg-caramel" />
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-foreground uppercase">
+                          <span className="font-semibold text-foreground">
                             {formatOrderStatusLabel(hist.to_status)}
                           </span>
                           <span className="text-[10px] text-muted-foreground font-mono">
