@@ -163,6 +163,16 @@ export function OrderLookupForm() {
           )}
         </button>
       </form>
+
+      <p className="border-t border-border pt-4 text-xs text-muted-foreground">
+        Forgot your order reference?{" "}
+        <Link
+          href="/orders/find"
+          className="inline-flex min-h-[48px] items-center font-semibold text-caramel hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+        >
+          Find My Orders &rarr;
+        </Link>
+      </p>
     </div>
   );
 }
