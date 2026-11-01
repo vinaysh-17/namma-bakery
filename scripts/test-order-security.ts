@@ -35,6 +35,7 @@ import {
   adminStaffRoleSchema,
 } from "../lib/admin/validation";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
+import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -727,6 +728,99 @@ assert(
 );
 
 // --- 11. Custom Cake Tracking Dashboard Security Boundaries ---
+
+// --- Admin order history deletion ---
+console.log("\n--- Admin Order History: ranges + authorization wiring ---");
+const day = dayRange("2026-11-01");
+assert(
+  day?.from === "2026-10-31T18:30:00.000Z" && day?.to === "2026-11-01T18:30:00.000Z",
+  "Order History: day range is the IST day expressed in UTC"
+);
+const week = weekRange("2026-11-01"); // a Sunday
+assert(
+  week?.label === "26 Oct 2026 – 1 Nov 2026" && week?.from === "2026-10-25T18:30:00.000Z",
+  "Order History: week is Monday-Sunday (Sunday belongs to the week that ends on it)"
+);
+const month = monthRange("2026-10");
+assert(
+  month?.from === "2026-09-30T18:30:00.000Z" && month?.to === "2026-10-31T18:30:00.000Z" && month?.label === "October 2026",
+  "Order History: month range covers the whole IST month"
+);
+assert(dayRange("2026-02-30") === null, "Order History: impossible date rejected");
+assert(customRange("2026-11-02", "2026-11-01") === null, "Order History: reversed custom range rejected");
+assert(customRange("2026-10-01", "2026-10-02")?.to === "2026-10-02T18:30:00.000Z", "Order History: custom range end is inclusive");
+
+const historyActions = fs.readFileSync(path.join(process.cwd(), "lib/admin/order-history-actions.ts"), "utf8");
+const exportedActions = historyActions.match(/export async function \w+/g) ?? [];
+assert(exportedActions.length === 3, "Order History: exactly 3 admin server actions exported (preview, delete, photo cleanup)");
+assert(
+  (historyActions.match(/await assertAdminSession\(\)/g) ?? []).length === exportedActions.length,
+  "Order History: every server action calls assertAdminSession()"
+);
+assert(!/createAdminClient|SUPABASE_SECRET_KEY/.test(historyActions), "Order History: actions never use the service-role client");
+assert(/confirmText !== "DELETE"/.test(historyActions), "Order History: typed confirmation is enforced server side");
+
+const staffHistory = fs.readFileSync(path.join(process.cwd(), "lib/staff/order-history-actions.ts"), "utf8");
+assert(
+  !/\.rpc\("(admin_|purge_)|\.delete\(|\.update\(|\.insert\(|createAdminClient|SUPABASE_SECRET_KEY/.test(staffHistory),
+  "Staff History: read-only actions (no delete/update/insert, no admin RPC, no service role)"
+);
+assert(
+  (staffHistory.match(/await assertStaff\(\)/g) ?? []).length === 2,
+  "Staff History: both read actions require an active staff session"
+);
+const staffDashboardSrc = fs.readFileSync(path.join(process.cwd(), "components/staff/staff-dashboard.tsx"), "utf8");
+assert(/<OrderHistoryView canDelete=\{false\} \/>/.test(staffDashboardSrc), "Staff History: staff portal renders the history read-only (canDelete=false)");
+const adminDashboardSrc = fs.readFileSync(path.join(process.cwd(), "components/admin/admin-dashboard.tsx"), "utf8");
+assert(/<OrderHistoryView canDelete \/>/.test(adminDashboardSrc), "Admin History: admin portal renders deletion controls");
+const migration13 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0013_staff_order_history_list.sql"), "utf8");
+assert(/if not is_staff\(\) then raise exception 'forbidden'/.test(migration13) && !/to anon/.test(migration13), "Staff History: list function requires is_staff() and is not granted to anon");
+const historyView = fs.readFileSync(path.join(process.cwd(), "components/history/order-history-view.tsx"), "utf8");
+assert(/canDelete && /.test(historyView) && (historyView.match(/setDetail\(/g) ?? []).length === 2 && (historyView.match(/onClick=\{\(\) => setDetail\(/g) ?? []).length === 1, "History UI: delete controls gated on canDelete; details opened only by the record click handler");
+
+const storageHelper = fs.readFileSync(path.join(process.cwd(), "lib/admin/order-history-storage.ts"), "utf8");
+assert(
+  /^import "server-only";/.test(storageHelper) && /\.storage\.from\(BUCKET\)\.remove\(/.test(storageHelper) && !/\.from\("(orders|custom_cake_requests|payments)"\)/.test(storageHelper),
+  "Order History: storage cleanup helper is server-only and only touches the cleanup queue + cake-reference files"
+);
+const migration15 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0015_custom_cake_retention_cleanup.sql"), "utf8");
+assert(
+  /grant execute on function public\.purge_old_order_history\(int\) to service_role/.test(migration15) &&
+    /revoke all on public\.storage_cleanup_queue from public, anon, authenticated/.test(migration15) &&
+    /enable row level security/.test(migration15) && !/cron\.schedule/.test(migration15),
+  "Retention: cleanup is service_role only, the photo queue is private, and no second cron job is created"
+);
+assert(
+  /custom_cake_requests r[\s\S]*r\.status in \('DECLINED','CUSTOMER_DECLINED','EXPIRED','WITHDRAWN'\)/.test(migration15) &&
+    !/'PENDING'|'ACCEPTED'|'READY_FOR_PICKUP'/.test(migration15.split("-- automatic retention")[1] ?? ""),
+  "Retention: only terminal custom cake history is selected (never active statuses)"
+);
+const migration14 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0014_custom_cake_history_deletion.sql"), "utf8");
+assert(
+  (migration14.match(/if not is_admin\(\) then raise exception 'forbidden'/g) ?? []).length === 2 && /if not is_staff\(\) then raise exception 'forbidden'/.test(migration14),
+  "Custom Cake History: admin delete/preview re-check is_admin(); history list requires is_staff()"
+);
+assert(
+  !/to anon/.test(migration14) && !/_delete_history_orders\(uuid\[\], text, jsonb\) to /.test(migration14),
+  "Custom Cake History: nothing granted to anon; internal delete helper has no grants"
+);
+const staffDir = path.join(process.cwd(), "components/staff");
+const staffSources = fs.readdirSync(staffDir).map((f) => fs.readFileSync(path.join(staffDir, f), "utf8")).join("\n");
+assert(
+  !/order-history-actions|deleteOrderHistoryAction|admin_delete_order_history/.test(staffSources),
+  "Order History: staff portal components never reference the delete actions"
+);
+const migration = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0012_admin_order_history_deletion.sql"), "utf8");
+assert(
+  (migration.match(/if not is_admin\(\) then raise exception 'forbidden'/g) ?? []).length === 3,
+  "Order History: all 3 admin_* database functions re-check is_admin()"
+);
+assert(
+  /grant execute on function public\.purge_old_order_history\(int\) to service_role/.test(migration) &&
+    !/purge_old_order_history\(int\) to authenticated/.test(migration),
+  "Order History: retention cleanup is service_role only"
+);
+
 console.log("\n--- 11. Custom Cake Tracking Dashboard Security Boundaries ---");
 
 assert(
