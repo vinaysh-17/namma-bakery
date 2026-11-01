@@ -77,9 +77,13 @@ function StaffCustomCakeModalContent({
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [price, setPrice] = React.useState(initialPrice);
-  const [pickupAt, setPickupAt] = React.useState(() =>
-    toLocalInputValue(request.preferred_pickup_at)
+  // Optional. Starts as the customer's requested pickup so leaving it unchanged (or
+  // clearing it) keeps their schedule; editing it confirms a different time.
+  const requestedPickupValue = React.useMemo(
+    () => toLocalInputValue(request.preferred_pickup_at),
+    [request.preferred_pickup_at]
   );
+  const [pickupAt, setPickupAt] = React.useState(requestedPickupValue);
   const [note, setNote] = React.useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -96,17 +100,22 @@ function StaffCustomCakeModalContent({
           setIsSubmitting(false);
           return;
         }
-        const pickup = new Date(pickupAt);
-        if (!pickupAt || Number.isNaN(pickup.getTime())) {
-          setErrorMessage("Choose the confirmed pickup date and time.");
-          setIsSubmitting(false);
-          return;
+        let confirmedPickupAt: string | undefined;
+        // Only send a value when staff actually changed it from the customer's request
+        if (pickupAt.trim() && pickupAt !== requestedPickupValue) {
+          const pickup = new Date(pickupAt);
+          if (Number.isNaN(pickup.getTime())) {
+            setErrorMessage("Enter a valid Confirmed Pickup / Ready Time or leave it empty.");
+            setIsSubmitting(false);
+            return;
+          }
+          confirmedPickupAt = pickup.toISOString();
         }
 
         const res = await acceptCustomCakeAsOrderAction({
           requestId: request.id,
           pricePaise: Math.round(rupees * 100),
-          confirmedPickupAt: pickup.toISOString(),
+          confirmedPickupAt,
           note: note.trim() || undefined,
         });
         if (!res.success) {
@@ -196,7 +205,7 @@ function StaffCustomCakeModalContent({
           {type === "ACCEPT" && (
             <div className="space-y-3">
               <div className="rounded-sm border border-border bg-background p-3 text-xs space-y-1">
-                <span className="text-muted-foreground">Requested Pickup:</span>
+                <span className="text-muted-foreground">Requested Pickup (customer):</span>
                 <span className="font-semibold text-foreground block">
                   {new Date(request.preferred_pickup_at).toLocaleString("en-IN", {
                     dateStyle: "medium",
@@ -231,16 +240,18 @@ function StaffCustomCakeModalContent({
                   htmlFor="confirmedPickup"
                   className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
                 >
-                  Confirmed Pickup / Ready Time <span className="text-destructive">*</span>
+                  Confirmed Pickup / Ready Time
                 </label>
                 <input
                   id="confirmedPickup"
                   type="datetime-local"
-                  required
                   value={pickupAt}
                   onChange={(e) => setPickupAt(e.target.value)}
                   className="w-full min-h-[42px] rounded-sm border border-border bg-background px-3 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
                 />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Optional. Pre-filled with the customer&apos;s requested pickup; change it only to confirm a different time.
+                </p>
               </div>
 
               <div>

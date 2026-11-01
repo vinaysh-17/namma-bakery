@@ -44,6 +44,88 @@ interface StaffCustomCakeDetailProps {
   onOpenOrderModal: (modal: ModalType) => void;
 }
 
+/**
+ * One customer reference photo. The bucket is private, so the image is fetched through a
+ * short-lived signed URL issued only to authorised staff/admin (verified server-side).
+ */
+function ReferenceImage({ storagePath }: { storagePath: string }) {
+  const [state, setState] = React.useState<
+    { status: "loading" } | { status: "ready"; url: string } | { status: "error" }
+  >({ status: "loading" });
+  const [attempt, setAttempt] = React.useState(0);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    getCustomCakeSignedUrlAction(storagePath)
+      .then((res) => {
+        if (!isMounted) return;
+        setState(
+          res.success && res.signedUrl
+            ? { status: "ready", url: res.signedUrl }
+            : { status: "error" }
+        );
+      })
+      .catch(() => {
+        if (isMounted) setState({ status: "error" });
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [storagePath, attempt]);
+
+  const retry = () => {
+    setState({ status: "loading" });
+    setAttempt((n) => n + 1);
+  };
+
+  if (state.status === "loading") {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        <span>Loading reference image...</span>
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="italic">Reference image is unavailable.</span>
+        <button
+          type="button"
+          onClick={retry}
+          className="font-semibold text-caramel hover:underline cursor-pointer"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <a href={state.url} target="_blank" rel="noopener noreferrer" className="block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={state.url}
+          alt="Customer cake reference"
+          onError={() => setState({ status: "error" })}
+          className="max-h-56 w-auto object-contain rounded-xs border border-border mx-auto"
+        />
+      </a>
+      <a
+        href={state.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-caramel hover:underline"
+      >
+        <ExternalLink className="size-3.5" />
+        <span>View High-Resolution Image</span>
+      </a>
+    </div>
+  );
+}
+
 export function StaffCustomCakeDetail({
   request,
   staffStatus,
@@ -57,29 +139,7 @@ export function StaffCustomCakeDetail({
   const [noteError, setNoteError] = React.useState<string | null>(null);
   const [isExpanded, setIsExpanded] = React.useState(false);
 
-  const referenceImage = request.custom_cake_images?.[0];
-  const storagePath = referenceImage?.storage_path;
-  const [signedImageUrl, setSignedImageUrl] = React.useState<string | null>(null);
-  const [isLoadingImage, setIsLoadingImage] = React.useState(Boolean(storagePath));
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    if (storagePath) {
-      getCustomCakeSignedUrlAction(storagePath).then((res) => {
-        if (isMounted) {
-          setIsLoadingImage(false);
-          if (res.success && res.signedUrl) {
-            setSignedImageUrl(res.signedUrl);
-          }
-        }
-      });
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [storagePath]);
+  const referenceImages = request.custom_cake_images ?? [];
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -427,41 +487,16 @@ export function StaffCustomCakeDetail({
           </div>
         )}
 
-        {/* Reference Image Photo */}
-        {referenceImage && (
+        {/* Reference Image Photo(s): private bucket, loaded through short-lived signed URLs */}
+        {referenceImages.length > 0 && (
           <div className="space-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block">
               Customer Reference Photo
             </span>
-            <div className="rounded-sm border border-border bg-background p-3.5 space-y-3">
-              {isLoadingImage ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span>Loading reference image...</span>
-                </div>
-              ) : signedImageUrl ? (
-                <div className="space-y-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={signedImageUrl}
-                    alt="Customer cake reference"
-                    className="max-h-56 w-auto object-contain rounded-xs border border-border mx-auto"
-                  />
-                  <a
-                    href={signedImageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-caramel hover:underline"
-                  >
-                    <ExternalLink className="size-3.5" />
-                    <span>View High-Resolution Image</span>
-                  </a>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">
-                  Image path recorded: {referenceImage.storage_path}
-                </p>
-              )}
+            <div className="rounded-sm border border-border bg-background p-3.5 space-y-4">
+              {referenceImages.map((img) => (
+                <ReferenceImage key={img.id} storagePath={img.storage_path} />
+              ))}
             </div>
           </div>
         )}
