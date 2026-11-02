@@ -200,6 +200,7 @@ export function StaffOrderList({
             const hasCakeMessage = order.order_items?.some(
               (item) => Boolean(item.cake_message)
             );
+            const hasCustomerNotes = Boolean(order.customer_notes?.trim());
 
             return (
               <div
@@ -234,6 +235,11 @@ export function StaffOrderList({
                         <span className="rounded bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-semibold px-1.5 py-0.5 inline-flex items-center gap-0.5 dark:bg-amber-950 dark:text-amber-300">
                           <Sparkles className="size-2.5" />
                           <span>Custom Message</span>
+                        </span>
+                      )}
+                      {hasCustomerNotes && (
+                        <span className="rounded bg-sky-50 text-sky-900 border border-sky-200 text-[10px] font-semibold px-1.5 py-0.5 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                          Customer Notes
                         </span>
                       )}
                     </div>

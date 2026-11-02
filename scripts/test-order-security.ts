@@ -972,6 +972,14 @@ assert(
 
 
 
+// --- Order notes are not copied onto cakes as inscriptions (#59) ---
+console.log("\n--- 14. Checkout Notes vs Cake Inscriptions ---");
+const checkoutFormSrc = fs.readFileSync(path.join(process.cwd(), "components/checkout/checkout-form.tsx"), "utf8");
+assert(
+  !/cakeMessage\s*:[^,}]*customerNotes/.test(checkoutFormSrc),
+  "Checkout: special instructions are not copied into each cake's inscription"
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");

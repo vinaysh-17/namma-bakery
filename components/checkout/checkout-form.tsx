@@ -118,10 +118,8 @@ export function CheckoutForm() {
               finish: item.configuration.finish,
             }
           : undefined,
-        cakeMessage:
-          item.kind === "TIERED_CAKE" && result.data.customerNotes
-            ? result.data.customerNotes.slice(0, 60)
-            : undefined,
+        // Order notes are not a per-cake inscription: they can mention several cakes or
+        // pickup details. Staff read them in full as "Customer Instructions" on the order.
       }));
 
       const actionResult = await placeOrderAction({
