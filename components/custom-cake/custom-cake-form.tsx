@@ -118,12 +118,25 @@ export function CustomCakeForm() {
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [phoneError, setPhoneError] = React.useState<string | null>(null);
   const [dateError, setDateError] = React.useState<string | null>(null);
+  const [weightError, setWeightError] = React.useState<string | null>(null);
+  const [fileError, setFileError] = React.useState<string | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const descriptionRef = React.useRef<HTMLTextAreaElement | null>(null);
   const nameRef = React.useRef<HTMLInputElement | null>(null);
   const phoneRef = React.useRef<HTMLInputElement | null>(null);
   const dateRef = React.useRef<HTMLInputElement | null>(null);
+  const customWeightRef = React.useRef<HTMLInputElement | null>(null);
+  const errorRef = React.useRef<HTMLDivElement | null>(null);
+
+  // A failed submit (server error, rate limit, network) shows its message next to the
+  // Submit button. Bring it into view and focus it, since on mobile the customer may
+  // have scrolled while the request was in flight.
+  React.useEffect(() => {
+    if (!errorMessage) return;
+    errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    errorRef.current?.focus({ preventScroll: true });
+  }, [errorMessage]);
 
   // Post-submission state
   const [submittedEnquiry, setSubmittedEnquiry] = React.useState<{
@@ -163,6 +176,8 @@ export function CustomCakeForm() {
     setNameError(null);
     setPhoneError(null);
     setDateError(null);
+    setWeightError(null);
+    setFileError(null);
 
     setCustomerName("");
     setCustomerPhone("");
@@ -196,16 +211,16 @@ export function CustomCakeForm() {
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage("Reference photo must be under 5MB in size.");
+      setFileError("Reference photo must be under 5MB in size.");
       return;
     }
 
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      setErrorMessage("Only PNG, JPEG, and WebP image formats are accepted.");
+      setFileError("Only PNG, JPEG, and WebP image formats are accepted.");
       return;
     }
 
-    setErrorMessage(null);
+    setFileError(null);
     setReferenceFile(file);
 
     const objectUrl = URL.createObjectURL(file);
@@ -213,6 +228,7 @@ export function CustomCakeForm() {
   };
 
   const handleRemoveFile = () => {
+    setFileError(null);
     setReferenceFile(null);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
@@ -222,57 +238,59 @@ export function CustomCakeForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    setDescriptionError(null);
-    setNameError(null);
-    setPhoneError(null);
-    setDateError(null);
 
-    // Basic client checks
-    if (!customerName.trim() || customerName.trim().length < 2) {
-      const msg = "Please enter your name (at least 2 characters).";
-      setNameError(msg);
-      setErrorMessage(msg);
-      nameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      nameRef.current?.focus();
-      return;
-    }
-
-    const cleanPhone = customerPhone.replace(/[\s\-]/g, "");
-    if (!/^(\+91|91|0)?[6-9]\d{9}$/.test(cleanPhone)) {
-      const msg = "Please enter a valid 10-digit Indian mobile number.";
-      setPhoneError(msg);
-      setErrorMessage(msg);
-      phoneRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      phoneRef.current?.focus();
-      return;
-    }
-
-    if (!description.trim() || description.trim().length < 10) {
-      const msg = "Please describe your design or theme idea (at least 10 characters).";
-      setDescriptionError(msg);
-      setErrorMessage(msg);
-      descriptionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      descriptionRef.current?.focus();
-      return;
-    }
-
-    // Same rule as the server: pickup from tomorrow (IST) onwards.
-    const dateCheck = customCakePickupDateSchema.safeParse(preferredPickupDate);
-    if (!dateCheck.success) {
-      const msg = dateCheck.error.issues[0]?.message || "Please choose a pickup date.";
-      setDateError(msg);
-      setErrorMessage(msg);
-      dateRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      dateRef.current?.focus();
-      return;
-    }
-
+    // Check every field and show each problem under its own field, then take the
+    // customer to the first one on the page.
     const finalWeight = isCustomWeight
       ? Number(customWeightInput)
       : weightGrams;
+    const nextWeightError =
+      !finalWeight || finalWeight < 250 || finalWeight > 20000
+        ? "Cake weight must be between 250g and 20,000g (20 kg)."
+        : null;
 
-    if (!finalWeight || finalWeight < 250 || finalWeight > 20000) {
-      setErrorMessage("Cake weight must be between 250g and 20,000g (20 kg).");
+    const nextDescriptionError =
+      description.trim().length < 10
+        ? "Please describe your design or theme idea (at least 10 characters)."
+        : null;
+
+    // Same rule as the server: pickup from tomorrow (IST) onwards.
+    const dateCheck = customCakePickupDateSchema.safeParse(preferredPickupDate);
+    const nextDateError = dateCheck.success
+      ? null
+      : dateCheck.error.issues[0]?.message || "Please choose a pickup date.";
+
+    const nextNameError =
+      customerName.trim().length < 2
+        ? "Please enter your name (at least 2 characters)."
+        : null;
+
+    const cleanPhone = customerPhone.replace(/[\s\-]/g, "");
+    const nextPhoneError = /^(\+91|91|0)?[6-9]\d{9}$/.test(cleanPhone)
+      ? null
+      : "Please enter a valid 10-digit Indian mobile number.";
+
+    setWeightError(nextWeightError);
+    setDescriptionError(nextDescriptionError);
+    setDateError(nextDateError);
+    setNameError(nextNameError);
+    setPhoneError(nextPhoneError);
+
+    // In the order the fields appear on the page.
+    const firstInvalid = (
+      [
+        [nextWeightError, customWeightRef.current],
+        [nextDescriptionError, descriptionRef.current],
+        [nextDateError, dateRef.current],
+        [nextNameError, nameRef.current],
+        [nextPhoneError, phoneRef.current],
+      ] as const
+    ).find(([error]) => error);
+
+    if (firstInvalid) {
+      const field = firstInvalid[1];
+      field?.scrollIntoView({ behavior: "smooth", block: "center" });
+      field?.focus({ preventScroll: true });
       return;
     }
 
@@ -428,16 +446,6 @@ export function CustomCakeForm() {
           </div>
         </div>
       </div>
-
-      {errorMessage && (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive dark:bg-destructive/20"
-        >
-          <AlertCircle className="size-4 shrink-0 mt-0.5" />
-          <span className="leading-tight">{errorMessage}</span>
-        </div>
-      )}
 
       {/* SECTION 1: Cake Occasion, Flavour & Specifications */}
       <div className="rounded-sm border border-border bg-card p-5 sm:p-7 space-y-6">
@@ -622,6 +630,7 @@ export function CustomCakeForm() {
                   onClick={() => {
                     setIsCustomWeight(false);
                     setWeightGrams(p.grams);
+                    setWeightError(null);
                   }}
                   className={`min-h-[50px] p-2.5 rounded-sm border text-left flex flex-col justify-center transition-colors ${
                     isSelected
@@ -643,25 +652,54 @@ export function CustomCakeForm() {
           <div className="pt-2">
             <button
               type="button"
-              onClick={() => setIsCustomWeight(!isCustomWeight)}
+              onClick={() => {
+                setIsCustomWeight(!isCustomWeight);
+                setWeightError(null);
+              }}
               className="inline-flex min-h-[48px] items-center text-xs font-semibold text-caramel hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
             >
               {isCustomWeight ? "← Choose preset weight" : "Need a different weight (e.g. 4 kg or 10 kg)?"}
             </button>
             {isCustomWeight && (
-              <div className="mt-2 flex items-center gap-2 max-w-xs">
-                <input
-                  type="number"
-                  min="250"
-                  max="20000"
-                  step="250"
-                  placeholder="e.g. 4000"
-                  value={customWeightInput}
-                  onChange={(e) => setCustomWeightInput(e.target.value)}
-                  className="w-full min-h-[48px] rounded-sm border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-                />
-                <span className="text-xs font-semibold text-muted-foreground">grams</span>
-              </div>
+              <>
+                <div className="mt-2 flex items-center gap-2 max-w-xs">
+                  <input
+                    ref={customWeightRef}
+                    type="number"
+                    min="250"
+                    max="20000"
+                    step="250"
+                    placeholder="e.g. 4000"
+                    aria-label="Cake weight in grams"
+                    value={customWeightInput}
+                    onChange={(e) => {
+                      setCustomWeightInput(e.target.value);
+                      const grams = Number(e.target.value);
+                      if (weightError && grams >= 250 && grams <= 20000) {
+                        setWeightError(null);
+                      }
+                    }}
+                    aria-invalid={!!weightError}
+                    aria-describedby={weightError ? "customWeight-error" : undefined}
+                    className={`w-full min-h-[48px] rounded-sm border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none transition-colors ${
+                      weightError
+                        ? "border-destructive ring-1 ring-destructive focus-visible:ring-2 focus-visible:ring-destructive"
+                        : "border-border focus-visible:ring-2 focus-visible:ring-caramel"
+                    }`}
+                  />
+                  <span className="text-xs font-semibold text-muted-foreground">grams</span>
+                </div>
+                {weightError && (
+                  <div
+                    id="customWeight-error"
+                    role="alert"
+                    className="flex items-center gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
+                  >
+                    <AlertCircle className="size-3.5 shrink-0" />
+                    <span>{weightError}</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </fieldset>
@@ -701,7 +739,6 @@ export function CustomCakeForm() {
               setDescription(e.target.value);
               if (descriptionError && e.target.value.trim().length >= 10) {
                 setDescriptionError(null);
-                setErrorMessage((prev) => (prev?.includes("describe") ? null : prev));
               }
             }}
             aria-invalid={!!descriptionError}
@@ -799,6 +836,15 @@ export function CustomCakeForm() {
               />
             </div>
           )}
+          {fileError && (
+            <div
+              role="alert"
+              className="flex items-center gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
+            >
+              <AlertCircle className="size-3.5 shrink-0" />
+              <span>{fileError}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -835,7 +881,6 @@ export function CustomCakeForm() {
                   setPreferredPickupDate(e.target.value);
                   if (dateError && customCakePickupDateSchema.safeParse(e.target.value).success) {
                     setDateError(null);
-                    setErrorMessage((prev) => (prev === dateError ? null : prev));
                   }
                 }}
                 aria-invalid={!!dateError}
@@ -913,7 +958,6 @@ export function CustomCakeForm() {
                   setCustomerName(e.target.value);
                   if (nameError && e.target.value.trim().length >= 2) {
                     setNameError(null);
-                    setErrorMessage((prev) => (prev?.includes("name") ? null : prev));
                   }
                 }}
                 aria-invalid={!!nameError}
@@ -961,7 +1005,6 @@ export function CustomCakeForm() {
                   const clean = e.target.value.replace(/[\s\-]/g, "");
                   if (phoneError && /^(\+91|91|0)?[6-9]\d{9}$/.test(clean)) {
                     setPhoneError(null);
-                    setErrorMessage((prev) => (prev?.includes("mobile") ? null : prev));
                   }
                 }}
                 aria-invalid={!!phoneError}
@@ -1031,6 +1074,17 @@ export function CustomCakeForm() {
 
       {/* Submit Button */}
       <div className="pt-2">
+        {errorMessage && (
+          <div
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
+            className="mb-3 flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive outline-none dark:bg-destructive/20"
+          >
+            <AlertCircle className="size-4 shrink-0 mt-0.5" />
+            <span className="leading-tight">{errorMessage}</span>
+          </div>
+        )}
         <button
           type="submit"
           disabled={isSubmitting}

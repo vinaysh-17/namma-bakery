@@ -1240,6 +1240,62 @@ assert(
   "Pickup Date: the form checks the date with the same rule before it submits"
 );
 
+// --- Custom cake form errors appear where the customer is looking (#65) ---
+console.log("\n--- 20. Custom Cake Form Errors Are Visible ---");
+const submitAreaAt = customCakeFormSrc.indexOf("{/* Submit Button */}");
+const section1At = customCakeFormSrc.indexOf("{/* SECTION 1");
+const bannerAt = customCakeFormSrc.indexOf("{errorMessage && (");
+assert(
+  submitAreaAt > 0 &&
+    bannerAt > submitAreaAt &&
+    customCakeFormSrc.indexOf("{errorMessage && (", bannerAt + 1) === -1,
+  "Form Errors: submit errors are shown next to the Submit button, not at the top of the form"
+);
+assert(
+  section1At > 0 &&
+    !customCakeFormSrc.slice(customCakeFormSrc.indexOf("<form"), section1At).includes("errorMessage"),
+  "Form Errors: there is no error banner above the first section any more"
+);
+assert(
+  /errorRef\.current\?\.scrollIntoView\(/.test(customCakeFormSrc) &&
+    /errorRef\.current\?\.focus\(/.test(customCakeFormSrc) &&
+    /\}, \[errorMessage\]\);/.test(customCakeFormSrc) &&
+    /ref=\{errorRef\}\s+tabIndex=\{-1\}\s+role="alert"/.test(customCakeFormSrc),
+  "Form Errors: a failed submit scrolls its message into view and focuses it"
+);
+const bannerMessages = [...customCakeFormSrc.matchAll(/setErrorMessage\(([^)\n]*)/g)]
+  .map((m) => m[1].trim())
+  .filter((arg) => arg !== "null");
+assert(
+  bannerMessages.length === 2 &&
+    bannerMessages.some((arg) => arg.startsWith("res.error")) &&
+    bannerMessages.some((arg) => /network error/.test(arg)),
+  "Form Errors: only server and network failures use the submit message; field problems show at the field"
+);
+assert(
+  ["setWeightError(nextWeightError)", "setDescriptionError(nextDescriptionError)", "setDateError(nextDateError)", "setNameError(nextNameError)", "setPhoneError(nextPhoneError)"].every(
+    (call) => customCakeFormSrc.includes(call)
+  ) &&
+    ["customWeight-error", "description-error", "preferredPickupDate-error", "customerName-error", "customerPhone-error"].every(
+      (id) => customCakeFormSrc.includes(`id="${id}"`)
+    ),
+  "Form Errors: every checked field (weight, description, date, name, phone) shows its own error"
+);
+const fieldOrder = ["customWeightRef.current]", "descriptionRef.current]", "dateRef.current]", "nameRef.current]", "phoneRef.current]"].map(
+  (ref) => customCakeFormSrc.indexOf(ref)
+);
+assert(
+  fieldOrder.every((at, i) => at > 0 && (i === 0 || at > fieldOrder[i - 1])) &&
+    /field\?\.scrollIntoView\(/.test(customCakeFormSrc) &&
+    /field\?\.focus\(/.test(customCakeFormSrc),
+  "Form Errors: the form takes the customer to the first problem in page order"
+);
+assert(
+  /setFileError\("Reference photo must be under 5MB in size\."\)/.test(customCakeFormSrc) &&
+    /setFileError\("Only PNG, JPEG, and WebP image formats are accepted\."\)/.test(customCakeFormSrc),
+  "Form Errors: photo problems are shown under the photo upload"
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");
