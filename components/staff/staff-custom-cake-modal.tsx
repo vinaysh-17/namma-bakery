@@ -281,7 +281,7 @@ function StaffCustomCakeModalContent({
           {type === "REJECT" && (
             <div className="space-y-3">
               <div className="rounded-sm border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
-                Rejecting this request closes it and records your reason in the audit log.
+                Rejecting this request closes it. Your reason is shown to the customer and recorded in the audit log.
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {[

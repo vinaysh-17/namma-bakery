@@ -926,6 +926,33 @@ assert(
   "Tracking Session: Mask phone number safely for customer view"
 );
 
+// --- Custom cake internal staff notes stay staff-only (#56) ---
+console.log("\n--- 12. Custom Cake Internal Notes Privacy ---");
+const migration16 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0016_internal_custom_cake_notes.sql"),
+  "utf8"
+);
+assert(
+  /insert into request_messages \(request_id, sender, staff_id, body, is_internal\)\s*values \(p_request_id, 'STAFF', auth\.uid\(\), p_body, true\)/i.test(migration16),
+  "Internal Notes: post_request_message_staff stores notes as internal"
+);
+assert(
+  /request_messages m where m\.request_id = r\.id and not m\.is_internal/.test(migration16),
+  "Internal Notes: get_request_by_token excludes internal messages"
+);
+assert(
+  /create policy request_messages_read[\s\S]*not is_internal/.test(migration16),
+  "Internal Notes: RLS hides internal messages from signed-in customers"
+);
+for (const file of ["lib/custom-cake/tracking-actions.ts", "lib/custom-cake/actions.ts"]) {
+  const src = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  const reads = (src.match(/request_messages \(/g) || []).length;
+  const filters = (src.match(/\.eq\("request_messages\.is_internal", false\)/g) || []).length;
+  assert(
+    reads > 0 && reads === filters,
+    `Internal Notes: every customer-facing request_messages read in ${file} filters is_internal`
+  );
+}
 
 
 

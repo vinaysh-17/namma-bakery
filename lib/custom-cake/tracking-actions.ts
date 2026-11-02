@@ -52,6 +52,7 @@ interface RawEnquiryRow {
     sender: "CUSTOMER" | "STAFF";
     body: string;
     created_at: string;
+    is_internal?: boolean;
   }>;
 }
 
@@ -95,7 +96,9 @@ async function mapEnquiryRows(
     );
 
     // Formatted customer-safe messages
-    const messages = (row.request_messages || []).map((msg) => ({
+    const messages = (row.request_messages || [])
+      .filter((msg) => !msg.is_internal)
+      .map((msg) => ({
       sender: msg.sender,
       body: msg.body,
       created_at: msg.created_at,
@@ -275,10 +278,13 @@ export async function verifyCustomCakeTrackingAction(
         request_messages (
           sender,
           body,
-          created_at
+          created_at,
+          is_internal
         )
       `)
       .or(`customer_phone.eq.${cleanPhone},customer_phone.eq.+91${cleanPhone},customer_phone.eq.91${cleanPhone}`)
+      // Internal staff notes must never reach the customer.
+      .eq("request_messages.is_internal", false)
       .order("created_at", { ascending: false });
 
     if (fetchErr) {
@@ -358,10 +364,13 @@ export async function getCustomCakeDashboardAction(): Promise<{
         request_messages (
           sender,
           body,
-          created_at
+          created_at,
+          is_internal
         )
       `)
       .or(`customer_phone.eq.${session.phone},customer_phone.eq.+91${session.phone},customer_phone.eq.91${session.phone}`)
+      // Internal staff notes must never reach the customer.
+      .eq("request_messages.is_internal", false)
       .order("created_at", { ascending: false });
 
     if (fetchErr) {

@@ -155,7 +155,8 @@ export async function getStaffCustomCakeRequests(options?: {
           sender,
           staff_id,
           body,
-          created_at
+          created_at,
+          is_internal
         )
       `)
       .order("created_at", { ascending: false })

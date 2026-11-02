@@ -39,6 +39,8 @@ export interface CustomCakeMessage {
   staff_id?: string | null;
   body: string;
   created_at: string;
+  /** Staff-only note. Never shown to the customer. */
+  is_internal?: boolean;
 }
 
 export interface CustomCakeRequest {
