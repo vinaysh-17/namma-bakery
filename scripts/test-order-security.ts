@@ -36,6 +36,8 @@ import {
 } from "../lib/admin/validation";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
+import { calculateOperationalSummary, getOrderPickupDateIst } from "../lib/staff/summary";
+import type { StaffOrder } from "../lib/staff/types";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -995,6 +997,31 @@ assert(
 assert(
   !/cancelled_by\s+= case when p_to = 'CANCELLED' then v_role/.test(migration18),
   "Staff Cancel: cancelled_by no longer stores the raw app_role (EMPLOYEE)"
+);
+
+// --- Staff queue is organised by pickup day, pending is global (#61) ---
+console.log("\n--- 16. Staff Queue Pickup Date ---");
+const mkOrder = (o: Partial<StaffOrder>) => ({ id: Math.random().toString(36), status: "ACCEPTED", ...o }) as StaffOrder;
+const queueOrders = [
+  // placed on Monday, picked up on Wednesday
+  mkOrder({ created_at: "2026-11-02T10:00:00+05:30", requested_pickup_at: "2026-11-04T16:00:00+05:30" }),
+  // placed 11:50 PM Tuesday, picked up Wednesday
+  mkOrder({ created_at: "2026-11-03T23:50:00+05:30", requested_pickup_at: "2026-11-04T11:00:00+05:30" }),
+  // pending order for Friday
+  mkOrder({ status: "PENDING", created_at: "2026-11-03T09:00:00+05:30", requested_pickup_at: "2026-11-06T12:00:00+05:30" }),
+  // requested Wednesday, bakery confirmed Thursday
+  mkOrder({ created_at: "2026-11-03T09:00:00+05:30", requested_pickup_at: "2026-11-04T10:00:00+05:30", confirmed_pickup_at: "2026-11-05T10:00:00+05:30" }),
+];
+const wednesday = calculateOperationalSummary(queueOrders, "2026-11-04");
+assert(wednesday.totalToday === 2, `Staff Queue: Wednesday shows the 2 orders due for pickup that day (got ${wednesday.totalToday})`);
+assert(wednesday.pending === 1, `Staff Queue: Pending counts pending orders for every pickup date (got ${wednesday.pending})`);
+assert(
+  getOrderPickupDateIst(queueOrders[3]) === "2026-11-05",
+  "Staff Queue: the confirmed pickup time takes precedence over the requested one"
+);
+assert(
+  getOrderPickupDateIst(queueOrders[1]) === "2026-11-04",
+  "Staff Queue: an order placed late at night is grouped under its pickup day"
 );
 
 console.log("\n========================================================");

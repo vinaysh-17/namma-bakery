@@ -32,7 +32,7 @@ import { NotificationsProvider } from "@/components/notifications/notifications-
 import { NotificationToastContainer } from "@/components/notifications/notification-toasts";
 import type { PortalNotification } from "@/lib/notifications/types";
 import { getIstDateString, formatIstDate } from "@/lib/utils/date";
-import { calculateOperationalSummary } from "@/lib/staff/summary";
+import { calculateOperationalSummary, getOrderPickupDateIst } from "@/lib/staff/summary";
 import {
   calculateCustomCakeOrderSummary,
   getCustomCakeStaffStatus,
@@ -82,11 +82,9 @@ export function StaffDashboard({
   const [activeOrderModal, setActiveOrderModal] =
     React.useState<ModalType | null>(null);
 
-  // Filter orders for the selected date (created_at in IST)
+  // Orders due for pickup on the selected date (IST)
   const ordersForSelectedDate = React.useMemo(() => {
-    return orders.filter(
-      (o) => getIstDateString(o.created_at) === selectedDate
-    );
+    return orders.filter((o) => getOrderPickupDateIst(o) === selectedDate);
   }, [orders, selectedDate]);
 
   // Operational summary for the selected date
@@ -218,7 +216,7 @@ export function StaffDashboard({
       } else if (deepLinkOrder) {
       setActiveTab("ORDERS");
       setActiveOrderFilter("ALL");
-      setSelectedDate(getIstDateString(deepLinkOrder.created_at));
+      setSelectedDate(getOrderPickupDateIst(deepLinkOrder));
       setSelectedOrderId(deepLinkOrder.id);
     } else if (
       appliedDeepLinkKey === null &&
@@ -339,7 +337,7 @@ export function StaffDashboard({
     const current = selectedOrderId
       ? orders.find((o) => o.id === selectedOrderId)
       : null;
-    if (!current || getIstDateString(current.created_at) !== date) {
+    if (!current || getOrderPickupDateIst(current) !== date) {
       setSelectedOrderId(null);
       clearUrlSelection();
     }
@@ -541,7 +539,7 @@ export function StaffDashboard({
                 todayIst={todayIst}
                 onChange={handleOrderDateChange}
               >
-                Showing orders created on <strong className="text-foreground">{formatIstDate(selectedDate)}</strong>
+                Showing orders for pickup on <strong className="text-foreground">{formatIstDate(selectedDate)}</strong>
                 {selectedDate === todayIst && (
                   <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200">
                     Today
@@ -570,6 +568,7 @@ export function StaffDashboard({
                 >
                   <StaffOrderList
                     orders={ordersForSelectedDate}
+                    allOrders={orders}
                     selectedOrderId={selectedOrder?.id || null}
                     activeFilter={activeOrderFilter}
                     onSelectOrder={handleSelectOrder}

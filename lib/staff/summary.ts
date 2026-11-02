@@ -6,8 +6,21 @@ import type {
 } from "@/lib/custom-cake/types";
 
 /**
- * Computes operational summary metrics for a given date in Asia/Kolkata timezone.
- * Scoped to the selected date (defaults to today in IST).
+ * The IST calendar day an order is due for pickup: the bakery's confirmed pickup time
+ * when set, otherwise the time the customer requested. The staff queue is organised by
+ * this day, not by the day the order was placed.
+ */
+export function getOrderPickupDateIst(
+  order: Pick<StaffOrder, "confirmed_pickup_at" | "requested_pickup_at">
+): string {
+  return getIstDateString(order.confirmed_pickup_at || order.requested_pickup_at);
+}
+
+/**
+ * Computes operational summary metrics for orders due for pickup on a given date in
+ * Asia/Kolkata timezone (defaults to today in IST).
+ * The Pending metric is the global pending workload across all dates, matching the staff
+ * navigation badge: a pending order needs action whatever its pickup day.
  */
 export function calculateOperationalSummary(
   orders: StaffOrder[],
@@ -23,14 +36,17 @@ export function calculateOperationalSummary(
   let cancelledOrRejected = 0;
 
   for (const order of orders) {
-    const isTargetDate = getIstDateString(order.created_at) === targetDateIst;
+    // Pending is counted across all dates.
+    if (order.status === "PENDING") pending++;
+
+    const isTargetDate = getOrderPickupDateIst(order) === targetDateIst;
     if (!isTargetDate) continue;
 
     totalToday++;
 
     switch (order.status) {
       case "PENDING":
-        pending++;
+        // Counted globally above
         break;
       case "ACCEPTED":
       case "PREPARING":
