@@ -1024,6 +1024,46 @@ assert(
   "Staff Queue: an order placed late at night is grouped under its pickup day"
 );
 
+// --- Accepting a custom cake is all-or-nothing (#63) ---
+console.log("\n--- 17. Custom Cake Accept Is Atomic ---");
+const migration19 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0019_atomic_custom_cake_accept.sql"),
+  "utf8"
+);
+const acceptFn = migration19.match(
+  /create or replace function public\.staff_accept_custom_request\([\s\S]*?end \$\$;/
+)?.[0] ?? "";
+assert(acceptFn.length > 0, "Atomic Accept: migration 0019 defines staff_accept_custom_request");
+assert(
+  /if not is_staff\(\)/.test(acceptFn),
+  "Atomic Accept: staff_accept_custom_request checks the caller is staff"
+);
+assert(
+  ["staff_review_request(", "staff_send_quote(", "customer_accept_quote("].every((step) =>
+    acceptFn.includes(step)
+  ),
+  "Atomic Accept: review, quote and order creation run inside the one function (one transaction)"
+);
+assert(
+  /revoke all on function public\.staff_accept_custom_request\([^)]*\) from public, anon;/.test(migration19) &&
+    /grant execute on function public\.staff_accept_custom_request\([^)]*\) to authenticated, service_role;/.test(migration19),
+  "Atomic Accept: callable by signed-in staff and the server only, not anonymous users"
+);
+assert(
+  /update public\.custom_cake_requests r\s+set status = 'UNDER_REVIEW'\s+where r\.status = 'QUOTED'\s+and not exists \(select 1 from public\.orders o where o\.custom_request_id = r\.id\)/.test(migration19),
+  "Atomic Accept: requests already stuck as QUOTED with no order are put back in review"
+);
+const staffCakeActions = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/staff-actions.ts"), "utf8");
+const acceptAction = staffCakeActions.slice(
+  staffCakeActions.indexOf("export async function acceptCustomCakeAsOrderAction"),
+  staffCakeActions.indexOf("export async function addCustomCakeStaffNoteAction")
+);
+const acceptRpcs = [...acceptAction.matchAll(/\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+assert(
+  acceptRpcs.length === 1 && acceptRpcs[0] === "staff_accept_custom_request",
+  `Atomic Accept: the Staff Portal accept makes a single database call (got ${acceptRpcs.join(", ") || "none"})`
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");
