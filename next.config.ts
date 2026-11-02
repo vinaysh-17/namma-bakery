@@ -45,6 +45,13 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     agentFeedback: true,
+    serverActions: {
+      // Custom cake enquiries upload a reference photo of up to 5 MB
+      // (MAX_IMAGE_FILE_SIZE_BYTES) through a Server Action. The default
+      // 1 MB limit rejected typical phone photos before the action ran.
+      // The extra 1 MB covers the other form fields and multipart overhead.
+      bodySizeLimit: "6mb",
+    },
   },
   cacheComponents: true,
   partialPrefetching: true,
