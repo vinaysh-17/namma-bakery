@@ -316,6 +316,22 @@ assert(
   "Valid custom cake baseline accepted"
 );
 
+// The egg type values must match the DB enum egg_type ('EGG','EGGLESS').
+const eggTypeEnum = fs
+  .readFileSync(path.join(process.cwd(), "supabase/migrations/0001_schema.sql"), "utf8")
+  .match(/create type egg_type\s+as enum \(([^)]*)\)/)?.[1]
+  .split(",")
+  .map((v) => v.trim().replace(/'/g, ""));
+assert(
+  !!eggTypeEnum &&
+    eggTypeEnum.every((v) => customCakeFormSchema.safeParse({ ...validCustomCake, eggType: v }).success),
+  "Custom cake accepts every DB egg_type value (EGG, EGGLESS)"
+);
+assert(
+  !customCakeFormSchema.safeParse({ ...validCustomCake, eggType: "REGULAR" }).success,
+  "Custom cake rejects egg types the DB enum does not have"
+);
+
 assert(
   !customCakeFormSchema.safeParse({ ...validCustomCake, customerName: "P" }).success,
   "Reject custom cake customer name < 2 characters"

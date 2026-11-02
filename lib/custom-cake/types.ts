@@ -9,7 +9,7 @@ export type CustomCakeStatus =
   | "EXPIRED"
   | "WITHDRAWN";
 
-export type CustomCakeEggType = "EGGLESS" | "REGULAR";
+export type CustomCakeEggType = "EGGLESS" | "EGG"; // must match the DB enum egg_type
 
 export interface CustomCakeImage {
   id: string;

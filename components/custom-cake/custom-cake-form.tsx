@@ -21,6 +21,7 @@ import {
   Copy,
 } from "lucide-react";
 import { submitCustomCakeRequestAction } from "@/lib/custom-cake/actions";
+import type { CustomCakeEggType } from "@/lib/custom-cake/types";
 import { getIstDateString } from "@/lib/utils/date";
 
 const CAKE_OCCASIONS = [
@@ -93,7 +94,7 @@ export function CustomCakeForm() {
   const [flavour, setFlavour] = React.useState(FLAVOUR_OPTIONS[0]);
   const [customFlavour, setCustomFlavour] = React.useState("");
 
-  const [eggType, setEggType] = React.useState<"EGGLESS" | "REGULAR">("EGGLESS");
+  const [eggType, setEggType] = React.useState<CustomCakeEggType>("EGGLESS");
   const [weightGrams, setWeightGrams] = React.useState<number>(1000);
   const [isCustomWeight, setIsCustomWeight] = React.useState(false);
   const [customWeightInput, setCustomWeightInput] = React.useState("");
@@ -540,10 +541,10 @@ export function CustomCakeForm() {
               <button
                 type="button"
                 role="radio"
-                aria-checked={eggType === "REGULAR"}
-                onClick={() => setEggType("REGULAR")}
+                aria-checked={eggType === "EGG"}
+                onClick={() => setEggType("EGG")}
                 className={`min-h-[48px] p-3 rounded-sm border text-left flex items-center justify-between transition-colors ${
-                  eggType === "REGULAR"
+                  eggType === "EGG"
                     ? "border-amber-600 bg-amber-500/10 text-amber-900 dark:text-amber-300"
                     : "border-border bg-background text-foreground hover:border-caramel/40"
                 }`}
@@ -557,7 +558,7 @@ export function CustomCakeForm() {
                     Traditional egg sponge
                   </span>
                 </div>
-                {eggType === "REGULAR" && <Check className="size-4 text-amber-700" />}
+                {eggType === "EGG" && <Check className="size-4 text-amber-700" />}
               </button>
             </div>
           </fieldset>
