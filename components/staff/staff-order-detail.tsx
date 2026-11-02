@@ -35,6 +35,7 @@ interface StaffOrderDetailProps {
 
 export function StaffOrderDetail({
   order,
+  role,
   onClose,
   onOpenModal,
   readOnly = false,
@@ -159,13 +160,16 @@ export function StaffOrderDetail({
                 >
                   Mark Ready for Pickup
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenModal({ type: "CANCEL", order })}
-                  className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
-                >
-                  Cancel Order
-                </button>
+                {/* PREPARING -> CANCELLED is admin-only (order_transitions); employees can cancel ACCEPTED orders. */}
+                {(order.status === "ACCEPTED" || role === "ADMIN") && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenModal({ type: "CANCEL", order })}
+                    className="h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-xs font-semibold hover:bg-destructive/10 cursor-pointer"
+                  >
+                    Cancel Order
+                  </button>
+                )}
               </>
             )}
 

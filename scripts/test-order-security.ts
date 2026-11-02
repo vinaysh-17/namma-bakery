@@ -980,6 +980,23 @@ assert(
   "Checkout: special instructions are not copied into each cake's inscription"
 );
 
+// --- Employees can cancel orders: cancelled_by matches its check constraint (#60) ---
+console.log("\n--- 15. Staff Cancellation Role ---");
+const schemaSql = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0001_schema.sql"), "utf8");
+const migration18 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0018_staff_cancelled_by.sql"), "utf8");
+const allowedCancelledBy = (schemaSql.match(/cancelled_by\s+text check \(cancelled_by in \(([^)]*)\)\)/)?.[1] ?? "")
+  .split(",")
+  .map((v) => v.trim().replace(/'/g, ""));
+const writtenCancelledBy = [...(migration18.match(/cancelled_by\s+= case when p_to = 'CANCELLED' then \(([^)]*)\)/)?.[1] ?? "").matchAll(/'([A-Z]+)'/g)].map((m) => m[1]);
+assert(
+  writtenCancelledBy.length > 0 && writtenCancelledBy.every((v) => allowedCancelledBy.includes(v)),
+  `Staff Cancel: transition_order only writes allowed cancelled_by values (${writtenCancelledBy.join(", ")})`
+);
+assert(
+  !/cancelled_by\s+= case when p_to = 'CANCELLED' then v_role/.test(migration18),
+  "Staff Cancel: cancelled_by no longer stores the raw app_role (EMPLOYEE)"
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");
