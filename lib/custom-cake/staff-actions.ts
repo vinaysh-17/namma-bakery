@@ -100,16 +100,22 @@ export async function updateCustomCakeStatusAction(params: {
 }
 
 /**
- * Accepts a custom cake request as an order, using the existing quote workflow end to end:
+ * Accepts a custom cake request as an order with one database call,
+ * staff_accept_custom_request (migration 0019). Inside a single transaction it runs the
+ * existing quote workflow end to end:
  *   staff_review_request (-> UNDER_REVIEW, if needed)
- *   -> staff_send_quote   (records the agreed price + the CUSTOMER requested pickup, -> QUOTED)
- *   -> customer_accept_quote (service role; creates the linked `orders` row in ACCEPTED,
- *      with its order item, status history, and sets the request to CUSTOMER_ACCEPTED)
+ *   -> staff_send_quote   (records the agreed price + the confirmed pickup, -> QUOTED)
+ *   -> customer_accept_quote (creates the linked `orders` row in ACCEPTED, with its order
+ *      item and status history, and sets the request to CUSTOMER_ACCEPTED)
+ *
+ * If any step fails (for example DAY_FULL), the whole accept is rolled back and the
+ * request stays as it was. Before this, the steps were three separate calls and a failed
+ * last step left the request QUOTED with no order.
  *
  * After this the request is driven by the normal order actions (ready for pickup,
- * collect payment & handover, cancel) on the linked order. Each RPC re-validates state,
- * and customer_accept_quote only accepts a QUOTED request, so a double submit cannot
- * create a second order (orders.custom_request_id is also unique).
+ * collect payment & handover, cancel) on the linked order. customer_accept_quote only
+ * accepts a QUOTED request, so a double submit cannot create a second order
+ * (orders.custom_request_id is also unique).
  */
 export async function acceptCustomCakeAsOrderAction(params: {
   requestId: string;
@@ -180,6 +186,10 @@ export async function acceptCustomCakeAsOrderAction(params: {
       if (code === "42702" || message.includes("is ambiguous")) {
         return "Database migration 0010 (customer_accept_quote fix) has not been applied. Run supabase/migrations/0010_fix_customer_accept_quote_ambiguity.sql in the Supabase SQL editor, then try again.";
       }
+      // PGRST202 = function not found: staff_accept_custom_request comes from migration 0019.
+      if (code === "PGRST202" || message.includes("Could not find the function")) {
+        return "Database migration 0019 (single-step custom cake accept) has not been applied. Run supabase/migrations/0019_atomic_custom_cake_accept.sql in the Supabase SQL editor, then try again.";
+      }
       if (message.includes("PICKUP_BEFORE_READY")) {
         return "The pickup time must be in the future.";
       }
@@ -193,34 +203,15 @@ export async function acceptCustomCakeAsOrderAction(params: {
       return `Failed to accept this request (database error${code ? " " + code : ""}). Please try again.`;
     };
 
-    if (request.status === "SUBMITTED") {
-      const { error } = await supabase.rpc("staff_review_request", {
+    // One call, one transaction: either the order is created or nothing changes.
+    const { data: accepted, error: acceptError } = await supabase.rpc(
+      "staff_accept_custom_request",
+      {
         p_request_id: requestId,
-        p_to: "UNDER_REVIEW",
-        p_message: null,
-      });
-      if (error) {
-        console.error("[acceptCustomCakeAsOrderAction] review error:", error.message);
-        return { success: false, error: mapError(error.message, error.code) };
+        p_price_paise: pricePaise,
+        p_confirmed_pickup: pickup.toISOString(),
+        p_note: note?.trim() || null,
       }
-    }
-
-    const { error: quoteError } = await supabase.rpc("staff_send_quote", {
-      p_request_id: requestId,
-      p_price_paise: pricePaise,
-      p_prep_minutes: 0,
-      p_confirmed_pickup: pickup.toISOString(),
-      p_note: note?.trim() || null,
-    });
-    if (quoteError) {
-      console.error("[acceptCustomCakeAsOrderAction] quote error:", quoteError.message);
-      return { success: false, error: mapError(quoteError.message, quoteError.code) };
-    }
-
-    const adminClient = createAdminClient();
-    const { data: accepted, error: acceptError } = await adminClient.rpc(
-      "customer_accept_quote",
-      { p_token: request.public_token }
     );
     if (acceptError) {
       console.error("[acceptCustomCakeAsOrderAction] accept error:", acceptError.message);

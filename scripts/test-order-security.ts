@@ -38,6 +38,14 @@ import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
 import { calculateOperationalSummary, getOrderPickupDateIst } from "../lib/staff/summary";
 import type { StaffOrder } from "../lib/staff/types";
+import {
+  getCustomCakeCustomerStage,
+  getCustomCakePickup,
+  isCustomCakeStageClosed,
+} from "../lib/custom-cake/customer-status";
+import { getCustomCakeStaffStatus } from "../lib/staff/custom-cake-workflow";
+import type { CustomCakeLinkedOrder, CustomCakeRequest } from "../lib/custom-cake/types";
+import type { OrderStatus } from "../lib/orders/types";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -1022,6 +1030,148 @@ assert(
 assert(
   getOrderPickupDateIst(queueOrders[1]) === "2026-11-04",
   "Staff Queue: an order placed late at night is grouped under its pickup day"
+);
+
+// --- Accepting a custom cake is all-or-nothing (#63) ---
+console.log("\n--- 17. Custom Cake Accept Is Atomic ---");
+const migration19 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0019_atomic_custom_cake_accept.sql"),
+  "utf8"
+);
+const acceptFn = migration19.match(
+  /create or replace function public\.staff_accept_custom_request\([\s\S]*?end \$\$;/
+)?.[0] ?? "";
+assert(acceptFn.length > 0, "Atomic Accept: migration 0019 defines staff_accept_custom_request");
+assert(
+  /if not is_staff\(\)/.test(acceptFn),
+  "Atomic Accept: staff_accept_custom_request checks the caller is staff"
+);
+assert(
+  ["staff_review_request(", "staff_send_quote(", "customer_accept_quote("].every((step) =>
+    acceptFn.includes(step)
+  ),
+  "Atomic Accept: review, quote and order creation run inside the one function (one transaction)"
+);
+assert(
+  /revoke all on function public\.staff_accept_custom_request\([^)]*\) from public, anon;/.test(migration19) &&
+    /grant execute on function public\.staff_accept_custom_request\([^)]*\) to authenticated, service_role;/.test(migration19),
+  "Atomic Accept: callable by signed-in staff and the server only, not anonymous users"
+);
+assert(
+  /update public\.custom_cake_requests r\s+set status = 'UNDER_REVIEW'\s+where r\.status = 'QUOTED'\s+and not exists \(select 1 from public\.orders o where o\.custom_request_id = r\.id\)/.test(migration19),
+  "Atomic Accept: requests already stuck as QUOTED with no order are put back in review"
+);
+const staffCakeActions = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/staff-actions.ts"), "utf8");
+const acceptAction = staffCakeActions.slice(
+  staffCakeActions.indexOf("export async function acceptCustomCakeAsOrderAction"),
+  staffCakeActions.indexOf("export async function addCustomCakeStaffNoteAction")
+);
+const acceptRpcs = [...acceptAction.matchAll(/\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+assert(
+  acceptRpcs.length === 1 && acceptRpcs[0] === "staff_accept_custom_request",
+  `Atomic Accept: the Staff Portal accept makes a single database call (got ${acceptRpcs.join(", ") || "none"})`
+);
+
+// --- Customer pages follow the linked order (#62) ---
+console.log("\n--- 18. Custom Cake Customer Status Follows The Order ---");
+const linkedOrder = (status: OrderStatus, pickup_at = "2026-11-05T16:00:00+05:30"): CustomCakeLinkedOrder => ({
+  order_number: "NB1001",
+  public_token: "t".repeat(32),
+  status,
+  pickup_at,
+});
+const expectedCustomerStage: Record<OrderStatus, string> = {
+  PENDING: "CONFIRMED",
+  ACCEPTED: "CONFIRMED",
+  PREPARING: "CONFIRMED",
+  READY_FOR_PICKUP: "READY_FOR_PICKUP",
+  COMPLETED: "COLLECTED",
+  REJECTED: "CANCELLED",
+  CANCELLED: "CANCELLED",
+  NO_SHOW: "NO_SHOW",
+};
+for (const [orderStatus, expected] of Object.entries(expectedCustomerStage) as [OrderStatus, string][]) {
+  const stage = getCustomCakeCustomerStage("CUSTOMER_ACCEPTED", linkedOrder(orderStatus));
+  assert(
+    stage === expected,
+    `Customer Status: an accepted request whose order is ${orderStatus} shows ${expected} (got ${stage})`
+  );
+  // Staff and customers must agree on whether the cake is still going ahead.
+  const staffStatus = getCustomCakeStaffStatus(
+    { status: "CUSTOMER_ACCEPTED" } as CustomCakeRequest,
+    { status: orderStatus } as StaffOrder
+  );
+  const staffClosed = ["CANCELLED", "REJECTED", "NO_SHOW"].includes(staffStatus);
+  assert(
+    staffClosed === isCustomCakeStageClosed(stage),
+    `Customer Status: staff (${staffStatus}) and customer (${stage}) agree for a ${orderStatus} order`
+  );
+}
+assert(
+  getCustomCakeCustomerStage("QUOTED", null) === "IN_REVIEW",
+  "Customer Status: a QUOTED request with no order is not shown as confirmed"
+);
+assert(
+  getCustomCakeCustomerStage("CUSTOMER_ACCEPTED", null) === "CONFIRMED",
+  "Customer Status: older requests confirmed before orders existed still show as confirmed"
+);
+const movedPickup = getCustomCakePickup({
+  status: "CUSTOMER_ACCEPTED",
+  preferred_pickup_at: "2026-11-05T10:00:00+05:30",
+  order: linkedOrder("ACCEPTED", "2026-11-05T16:00:00+05:30"),
+});
+assert(
+  movedPickup.confirmed && movedPickup.changed && movedPickup.at === "2026-11-05T16:00:00+05:30",
+  "Customer Status: the bakery's confirmed pickup time is shown, and flagged when it differs from the request"
+);
+const samePickup = getCustomCakePickup({
+  status: "CUSTOMER_ACCEPTED",
+  preferred_pickup_at: "2026-11-05T10:00:00.000Z",
+  order: linkedOrder("ACCEPTED", "2026-11-05T15:30:00+05:30"),
+});
+assert(
+  samePickup.confirmed && !samePickup.changed,
+  "Customer Status: the same instant in a different format is not flagged as changed"
+);
+const unconfirmedPickup = getCustomCakePickup({
+  status: "UNDER_REVIEW",
+  preferred_pickup_at: "2026-11-05T10:00:00+05:30",
+});
+assert(
+  !unconfirmedPickup.confirmed && unconfirmedPickup.at === "2026-11-05T10:00:00+05:30",
+  "Customer Status: before acceptance the requested pickup time is shown"
+);
+for (const file of ["lib/custom-cake/tracking-actions.ts", "lib/custom-cake/actions.ts"]) {
+  const src = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  assert(
+    src.includes("getLinkedOrdersByRequestId(") && /order: linkedOrders\.get\(/.test(src),
+    `Customer Status: ${file} loads the linked order for the customer view`
+  );
+}
+const linkedOrdersSrc = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/linked-orders.ts"), "utf8");
+const selectedOrderCols = (linkedOrdersSrc.match(/\.select\(\s*"([^"]+)"/)?.[1] ?? "")
+  .split(",")
+  .map((c) => c.trim())
+  .filter(Boolean);
+const grantedOrderCols = (
+  fs
+    .readFileSync(path.join(process.cwd(), "supabase/migrations/0020_custom_cake_order_status_read.sql"), "utf8")
+    .match(/grant select \(([^)]+)\)\s+on table public\.orders to service_role;/)?.[1] ?? ""
+)
+  .split(",")
+  .map((c) => c.trim());
+assert(
+  selectedOrderCols.length > 0 && selectedOrderCols.every((c) => grantedOrderCols.includes(c)),
+  `Customer Status: the server reads only order columns granted by migration 0020 (${selectedOrderCols.join(", ")})`
+);
+assert(
+  !grantedOrderCols.some((c) => /phone|email|name|notes|reason|paise/.test(c)),
+  "Customer Status: the service-role grant on orders excludes customer details, notes and amounts"
+);
+const broadcastSrc = fs.readFileSync(path.join(process.cwd(), "lib/realtime/broadcast.ts"), "utf8");
+assert(
+  /customRequestTopic\(data\.custom_request_id\)/.test(broadcastSrc),
+  "Customer Status: a change to a custom cake order also refreshes the customer's custom cake tracker"
 );
 
 console.log("\n========================================================");
