@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { customRequestTopic } from "@/lib/realtime/broadcast";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import { customCakeTrackingInputSchema } from "./validation";
+import { getLinkedOrdersByRequestId } from "./linked-orders";
 import {
   createTrackingSessionToken,
   verifyTrackingSessionToken,
@@ -74,6 +75,10 @@ async function mapEnquiryRows(
   adminClient: AdminClient
 ): Promise<CustomCakeTrackingItem[]> {
   const items: CustomCakeTrackingItem[] = [];
+  const linkedOrders = await getLinkedOrdersByRequestId(
+    adminClient,
+    rows.map((row) => row.id)
+  );
 
   for (const row of rows) {
     // Generate signed URL for reference image if available
@@ -124,6 +129,7 @@ async function mapEnquiryRows(
       created_at: row.created_at,
       updated_at: row.updated_at,
       reference_image_url: referenceImageUrl,
+      order: linkedOrders.get(row.id) ?? null,
       quote: activeQuote
         ? {
             price_paise: activeQuote.price_paise,

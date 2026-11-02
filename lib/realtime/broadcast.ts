@@ -73,17 +73,22 @@ export async function notifyStaffChanged(): Promise<void> {
   await sendPing([staffTopic()]);
 }
 
-/** An order changed: update the customer tracking page for it and all staff portals. */
+/**
+ * An order changed: update the customer tracking page for it and all staff portals.
+ * For a custom cake order, also update the customer's custom cake tracker, which shows
+ * the order's progress.
+ */
 export async function notifyOrderChanged(orderId: string): Promise<void> {
   try {
     const supabase = await createClient();
     const { data } = await supabase
       .from("orders")
-      .select("order_number")
+      .select("order_number, custom_request_id")
       .eq("id", orderId)
       .maybeSingle();
     const topics = [staffTopic()];
     if (data?.order_number) topics.push(orderTopic(data.order_number));
+    if (data?.custom_request_id) topics.push(customRequestTopic(data.custom_request_id));
     await sendPing(topics);
   } catch (err) {
     console.warn("[realtime] order ping failed:", err instanceof Error ? err.message : err);

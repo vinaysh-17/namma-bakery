@@ -1,3 +1,5 @@
+import type { OrderStatus } from "@/lib/orders/types";
+
 export type CustomCakeStatus =
   | "SUBMITTED"
   | "UNDER_REVIEW"
@@ -70,6 +72,19 @@ export interface CustomCakeRequest {
   request_messages?: CustomCakeMessage[];
 }
 
+/**
+ * The order created when the bakery accepted the request (orders.custom_request_id).
+ * After acceptance, its status is the request's real progress: the request itself
+ * stays CUSTOMER_ACCEPTED whatever happens to the order.
+ */
+export interface CustomCakeLinkedOrder {
+  order_number: string;
+  public_token: string;
+  status: OrderStatus;
+  /** Confirmed pickup time, else the requested one. */
+  pickup_at: string | null;
+}
+
 export interface CustomCakePublicView {
   request_number: string;
   status: CustomCakeStatus;
@@ -86,6 +101,7 @@ export interface CustomCakePublicView {
   decline_reason?: string | null;
   created_at?: string;
   reference_image_url?: string | null;
+  order?: CustomCakeLinkedOrder | null;
   quote?: {
     price_paise: number;
     confirmed_pickup_at: string;
@@ -130,6 +146,7 @@ export interface CustomCakeTrackingItem {
   created_at: string;
   updated_at: string;
   reference_image_url?: string | null;
+  order?: CustomCakeLinkedOrder | null;
   quote?: {
     price_paise: number;
     confirmed_pickup_at: string;

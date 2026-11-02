@@ -17,6 +17,11 @@ import {
 } from "lucide-react";
 import type { CustomCakePublicView } from "@/lib/custom-cake/types";
 import { formatIstDate, formatIstTime } from "@/lib/utils/date";
+import {
+  getCustomCakeCustomerBadge,
+  getCustomCakeCustomerStage,
+  getCustomCakePickup,
+} from "@/lib/custom-cake/customer-status";
 
 interface CustomCakeConfirmationProps {
   request: CustomCakePublicView;
@@ -33,37 +38,11 @@ export function CustomCakeConfirmation({ request }: CustomCakeConfirmationProps)
     });
   };
 
-  const getStatusBadge = () => {
-    switch (request.status) {
-      case "SUBMITTED":
-        return {
-          label: "Enquiry Received · Pending Review",
-          style: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300",
-        };
-      case "UNDER_REVIEW":
-      case "NEEDS_CLARIFICATION":
-        return {
-          label: "In Review · Baker Contacting You",
-          style: "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-300",
-        };
-      case "CUSTOMER_ACCEPTED":
-      case "QUOTED":
-        return {
-          label: "Confirmed by Bakery",
-          style: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300",
-        };
-      case "DECLINED":
-      case "CUSTOMER_DECLINED":
-      case "WITHDRAWN":
-      case "EXPIRED":
-        return {
-          label: "Request Closed / Declined",
-          style: "bg-destructive/15 text-destructive border-destructive/30",
-        };
-    }
-  };
-
-  const badge = getStatusBadge();
+  // The linked order, once there is one, decides the status (ready, collected, cancelled...).
+  const badge = getCustomCakeCustomerBadge(
+    getCustomCakeCustomerStage(request.status, request.order)
+  );
+  const pickup = getCustomCakePickup(request);
 
   return (
     <div className="max-w-3xl mx-auto space-y-8 py-6">
@@ -113,8 +92,21 @@ export function CustomCakeConfirmation({ request }: CustomCakeConfirmationProps)
           <span
             className={`inline-block rounded px-3 py-1 text-xs font-semibold uppercase tracking-wider border ${badge.style}`}
           >
-            {badge.label}
+            {badge.label} · {badge.detail}
           </span>
+          {request.order && (
+            <p className="pt-2 text-xs text-foreground font-medium">
+              Order{" "}
+              <span className="font-mono font-bold">{request.order.order_number}</span>
+              {" · "}
+              <Link
+                href={`/orders/${request.order.public_token}`}
+                className="text-caramel hover:underline font-semibold focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+              >
+                Track this order &rarr;
+              </Link>
+            </p>
+          )}
         </div>
 
         <div className="pt-1 space-y-1.5 max-w-md mx-auto">
@@ -191,16 +183,25 @@ export function CustomCakeConfirmation({ request }: CustomCakeConfirmationProps)
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           <div className="rounded-sm border border-border bg-background p-3.5 space-y-1">
             <span className="text-muted-foreground font-medium block">
-              Requested Pickup Slot:
+              {pickup.confirmed ? "Confirmed Pickup:" : "Requested Pickup Slot:"}
             </span>
             <div className="flex items-center gap-1.5 font-semibold text-foreground text-sm">
               <Calendar className="size-4 text-caramel" />
-              <span>{formatIstDate(request.preferred_pickup_at)}</span>
+              <span>{formatIstDate(pickup.at)}</span>
             </div>
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Clock className="size-3.5 text-caramel" />
-              <span>Around {formatIstTime(request.preferred_pickup_at)}</span>
+              <span>
+                {pickup.confirmed ? "At" : "Around"} {formatIstTime(pickup.at)}
+              </span>
             </div>
+            {pickup.changed && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                The bakery changed this from your requested{" "}
+                {formatIstDate(request.preferred_pickup_at)}, around{" "}
+                {formatIstTime(request.preferred_pickup_at)}.
+              </p>
+            )}
           </div>
 
           <div className="rounded-sm border border-border bg-background p-3.5 space-y-1">

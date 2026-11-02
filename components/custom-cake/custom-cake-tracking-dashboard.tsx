@@ -20,7 +20,14 @@ import {
   ArrowLeft,
   XCircle,
 } from "lucide-react";
-import type { CustomCakeTrackingItem, CustomCakeStatus } from "@/lib/custom-cake/types";
+import type { CustomCakeTrackingItem } from "@/lib/custom-cake/types";
+import {
+  getCustomCakeCustomerBadge,
+  getCustomCakeCustomerStage,
+  getCustomCakePickup,
+  isCustomCakeStageClosed,
+  type CustomCakeCustomerStage,
+} from "@/lib/custom-cake/customer-status";
 import {
   verifyCustomCakeTrackingAction,
   getCustomCakeDashboardAction,
@@ -177,69 +184,44 @@ export function CustomCakeTrackingDashboard({
   };
 
   // Status mapping
-  const getStatusBadge = (status: CustomCakeStatus) => {
-    switch (status) {
-      case "SUBMITTED":
-        return {
-          label: "Enquiry Received",
-          detail: "Pending Baker Review",
-          style: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300",
-        };
-      case "UNDER_REVIEW":
-        return {
-          label: "In Review",
-          detail: "Baker Inspecting Schedule",
-          style: "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-950 dark:text-blue-300",
-        };
-      case "NEEDS_CLARIFICATION":
-        return {
-          label: "Clarification Needed",
-          detail: "Baker Sent A Note",
-          style: "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-950 dark:text-purple-300",
-        };
-      case "QUOTED":
-        return {
-          label: "Quote Prepared",
-          detail: "Ready for Your Approval",
-          style: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-300",
-        };
-      case "CUSTOMER_ACCEPTED":
-        return {
-          label: "Confirmed",
-          detail: "Scheduled for Baking",
-          style: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300",
-        };
-      case "DECLINED":
-      case "CUSTOMER_DECLINED":
-      case "WITHDRAWN":
-      case "EXPIRED":
-        return {
-          label: "Request Closed / Declined",
-          detail: "Not In Progress",
-          style: "bg-destructive/15 text-destructive border-destructive/30",
-        };
-    }
-  };
-
-  // Timeline step calculation
-  const getTimelineStep = (status: CustomCakeStatus): number => {
-    switch (status) {
-      case "SUBMITTED":
+  // Timeline step: 1 Received, 2 Reviewing, 3 Confirmed, 4 Ready / Collected.
+  const getTimelineStep = (stage: CustomCakeCustomerStage): number => {
+    switch (stage) {
+      case "RECEIVED":
         return 1;
-      case "UNDER_REVIEW":
+      case "IN_REVIEW":
       case "NEEDS_CLARIFICATION":
         return 2;
-      case "QUOTED":
+      case "CONFIRMED":
         return 3;
-      case "CUSTOMER_ACCEPTED":
+      case "READY_FOR_PICKUP":
+      case "COLLECTED":
         return 4;
       default:
-        return 0; // Closed / Declined
+        return 0; // Cancelled / not collected / closed
     }
   };
 
-  const isDeclinedOrClosed = (status: CustomCakeStatus): boolean => {
-    return ["DECLINED", "CUSTOMER_DECLINED", "WITHDRAWN", "EXPIRED"].includes(status);
+  const getClosedMessage = (
+    stage: CustomCakeCustomerStage,
+    enquiry: CustomCakeTrackingItem
+  ): { title: string; body: string } => {
+    if (stage === "CANCELLED") {
+      return {
+        title: "Order Cancelled",
+        body: `Custom cake order ${enquiry.order?.order_number ?? ""} was cancelled. Please call the bakery if you have any questions.`,
+      };
+    }
+    if (stage === "NO_SHOW") {
+      return {
+        title: "Not Collected",
+        body: `Custom cake order ${enquiry.order?.order_number ?? ""} was not collected and has been closed. Please call the bakery if you have any questions.`,
+      };
+    }
+    return {
+      title: "Enquiry Closed / Declined",
+      body: enquiry.decline_reason || "This custom cake enquiry has been closed by bakery staff.",
+    };
   };
 
   return (
@@ -457,10 +439,19 @@ export function CustomCakeTrackingDashboard({
           {/* Enquiries List */}
           <div className="space-y-5">
             {enquiries.map((enquiry) => {
-              const badge = getStatusBadge(enquiry.status);
-              const currentStep = getTimelineStep(enquiry.status);
-              const isDeclined = isDeclinedOrClosed(enquiry.status);
+              const stage = getCustomCakeCustomerStage(enquiry.status, enquiry.order);
+              const badge = getCustomCakeCustomerBadge(stage);
+              const currentStep = getTimelineStep(stage);
+              const isDeclined = isCustomCakeStageClosed(stage);
+              const closedMessage = isDeclined ? getClosedMessage(stage, enquiry) : null;
+              const pickup = getCustomCakePickup(enquiry);
               const isExpanded = Boolean(expandedCards[enquiry.id]);
+              const timelineSteps = [
+                { step: 1, label: "1. Received" },
+                { step: 2, label: "2. Reviewing" },
+                { step: 3, label: "3. Confirmed" },
+                { step: 4, label: stage === "COLLECTED" ? "4. Collected" : "4. Ready for Pickup" },
+              ];
 
               return (
                 <div
@@ -502,6 +493,15 @@ export function CustomCakeTrackingDashboard({
                           <span className="size-1.5 rounded-full bg-current" />
                           <span>{badge.label}</span>
                         </span>
+                        {enquiry.order && (
+                          <Link
+                            href={`/orders/${enquiry.order.public_token}`}
+                            className="min-touch-target inline-flex items-center gap-1 text-xs font-semibold text-caramel hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+                          >
+                            <span>Order {enquiry.order.order_number}</span>
+                            <ExternalLink className="size-3" />
+                          </Link>
+                        )}
                       </div>
                     </div>
 
@@ -509,78 +509,44 @@ export function CustomCakeTrackingDashboard({
                     {!isDeclined ? (
                       <div className="pt-2">
                         <div className="grid grid-cols-4 gap-2 text-center text-[11px]">
-                          {/* Step 1: Received */}
-                          <div className="space-y-1.5">
-                            <div
-                              className={`h-1.5 rounded-full ${
-                                currentStep >= 1 ? "bg-caramel" : "bg-muted"
-                              }`}
-                            />
-                            <span
-                              className={`block font-medium ${
-                                currentStep >= 1 ? "text-foreground font-semibold" : "text-muted-foreground"
-                              }`}
-                            >
-                              1. Received
-                            </span>
-                          </div>
-
-                          {/* Step 2: Reviewing */}
-                          <div className="space-y-1.5">
-                            <div
-                              className={`h-1.5 rounded-full ${
-                                currentStep >= 2 ? "bg-caramel" : "bg-muted"
-                              }`}
-                            />
-                            <span
-                              className={`block font-medium ${
-                                currentStep >= 2 ? "text-foreground font-semibold" : "text-muted-foreground"
-                              }`}
-                            >
-                              2. Reviewing
-                            </span>
-                          </div>
-
-                          {/* Step 3: Quoted */}
-                          <div className="space-y-1.5">
-                            <div
-                              className={`h-1.5 rounded-full ${
-                                currentStep >= 3 ? "bg-caramel" : "bg-muted"
-                              }`}
-                            />
-                            <span
-                              className={`block font-medium ${
-                                currentStep >= 3 ? "text-foreground font-semibold" : "text-muted-foreground"
-                              }`}
-                            >
-                              3. Price Quote
-                            </span>
-                          </div>
-
-                          {/* Step 4: Confirmed */}
-                          <div className="space-y-1.5">
-                            <div
-                              className={`h-1.5 rounded-full ${
-                                currentStep >= 4 ? "bg-emerald-600" : "bg-muted"
-                              }`}
-                            />
-                            <span
-                              className={`block font-medium ${
-                                currentStep >= 4 ? "text-emerald-700 font-semibold dark:text-emerald-400" : "text-muted-foreground"
-                              }`}
-                            >
-                              4. Confirmed
-                            </span>
-                          </div>
+                          {timelineSteps.map(({ step, label }) => {
+                            const reached = currentStep >= step;
+                            // Confirmed and later steps are shown in green.
+                            const isConfirmedStep = step >= 3;
+                            return (
+                              <div key={step} className="space-y-1.5">
+                                <div
+                                  className={`h-1.5 rounded-full ${
+                                    reached
+                                      ? isConfirmedStep
+                                        ? "bg-emerald-600"
+                                        : "bg-caramel"
+                                      : "bg-muted"
+                                  }`}
+                                />
+                                <span
+                                  className={`block font-medium ${
+                                    reached
+                                      ? isConfirmedStep
+                                        ? "text-emerald-700 font-semibold dark:text-emerald-400"
+                                        : "text-foreground font-semibold"
+                                      : "text-muted-foreground"
+                                  }`}
+                                >
+                                  {label}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     ) : (
                       <div className="rounded-sm border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-start gap-2">
                         <XCircle className="size-4 shrink-0 mt-0.5" />
                         <div>
-                          <strong className="font-semibold block">Enquiry Closed / Declined</strong>
+                          <strong className="font-semibold block">{closedMessage?.title}</strong>
                           <p className="text-[11px] mt-0.5 text-muted-foreground">
-                            {enquiry.decline_reason || "This custom cake enquiry has been closed by bakery staff."}
+                            {closedMessage?.body}
                           </p>
                         </div>
                       </div>
@@ -614,14 +580,19 @@ export function CustomCakeTrackingDashboard({
 
                       <div className="space-y-0.5 rounded-sm border border-border bg-background p-2.5">
                         <span className="text-muted-foreground text-[10px] uppercase font-semibold block">
-                          Requested Pickup
+                          {pickup.confirmed ? "Confirmed Pickup" : "Requested Pickup"}
                         </span>
                         <p className="font-semibold text-foreground truncate">
-                          {formatIstDate(enquiry.preferred_pickup_at)}
+                          {formatIstDate(pickup.at)}
                         </p>
                         <span className="text-[11px] text-muted-foreground">
-                          Around {formatIstTime(enquiry.preferred_pickup_at)}
+                          {pickup.confirmed ? "At" : "Around"} {formatIstTime(pickup.at)}
                         </span>
+                        {pickup.changed && (
+                          <span className="block text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                            Changed from your request
+                          </span>
+                        )}
                       </div>
 
                       <div className="space-y-0.5 rounded-sm border border-border bg-background p-2.5">

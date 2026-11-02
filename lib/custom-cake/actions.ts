@@ -10,6 +10,7 @@ import {
   validateImageMagicBytes,
 } from "./validation";
 import type { CustomCakePublicView } from "./types";
+import { getLinkedOrdersByRequestId } from "./linked-orders";
 
 const DEFAULT_LOCATION_SLUG = "namma-bakery-rr-nagar";
 
@@ -350,12 +351,15 @@ export async function getCustomCakePublicViewAction(
       referenceImageUrl = signedData?.signedUrl || null;
     }
 
-    // 3. Current active quote if any
+    // 3. The order created from this request, if the bakery accepted it
+    const linkedOrders = await getLinkedOrdersByRequestId(supabase, [requestRow.id]);
+
+    // 4. Current active quote if any
     const activeQuote = requestRow.custom_cake_quotes?.find(
       (q: { superseded_at?: string | null }) => !q.superseded_at
     );
 
-    // 4. Construct privacy-safe response
+    // 5. Construct privacy-safe response
     const firstName = requestRow.customer_name.split(" ")[0] || requestRow.customer_name;
 
     const publicView: CustomCakePublicView = {
@@ -374,6 +378,7 @@ export async function getCustomCakePublicViewAction(
       decline_reason: requestRow.decline_reason,
       created_at: requestRow.created_at,
       reference_image_url: referenceImageUrl,
+      order: linkedOrders.get(requestRow.id) ?? null,
       quote: activeQuote
         ? {
             price_paise: activeQuote.price_paise,
