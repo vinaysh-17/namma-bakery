@@ -2,8 +2,8 @@ import { z } from "zod";
 import {
   indianPhoneSchema,
   optionalEmailSchema,
-  calendarDateSchema,
 } from "@/lib/validation/common";
+import { formatIstDate, getIstDateString } from "@/lib/utils/date";
 
 export const ALLOWED_IMAGE_MIME_TYPES = [
   "image/jpeg",
@@ -12,6 +12,55 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
 ] as const;
 
 export const MAX_IMAGE_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB limit per database constraint
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The earliest pickup date a customer can ask for: tomorrow in IST, as "YYYY-MM-DD".
+ * Custom cakes need at least a day's notice. IST has no daylight saving, so the IST
+ * date 24 hours from now is always tomorrow's date.
+ */
+export function getEarliestCustomCakePickupDate(now: Date | number = Date.now()): string {
+  return getIstDateString(new Date(now).getTime() + DAY_MS);
+}
+
+/** True for a "YYYY-MM-DD" date that exists in the calendar ("2026-02-30" does not). */
+function isRealCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+/**
+ * Preferred pickup date for a custom cake. Checked on the server at submit time, and by
+ * the form before it submits, so both reject today and earlier dates (IST).
+ */
+export const customCakePickupDateSchema = z
+  .string({ message: "Please choose a pickup date." })
+  .superRefine((value, ctx) => {
+    if (!isRealCalendarDate(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: value ? "Please choose a valid pickup date." : "Please choose a pickup date.",
+      });
+      return;
+    }
+    const earliest = getEarliestCustomCakePickupDate();
+    if (value < earliest) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Custom cakes need at least a day's notice. Please choose a pickup date from ${formatIstDate(
+          `${earliest}T12:00:00+05:30`
+        )} onwards.`,
+      });
+    }
+  });
 
 export const customCakeFormSchema = z
   .object({
@@ -46,7 +95,7 @@ export const customCakeFormSchema = z
       .max(50, "Shape cannot exceed 50 characters")
       .optional()
       .transform((val) => (val?.trim() ? val.trim() : "Round")),
-    preferredPickupDate: calendarDateSchema,
+    preferredPickupDate: customCakePickupDateSchema,
     preferredPickupTime: z
       .string()
       .min(1, "Preferred pickup time is required")
