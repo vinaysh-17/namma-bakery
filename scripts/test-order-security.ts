@@ -954,6 +954,22 @@ for (const file of ["lib/custom-cake/tracking-actions.ts", "lib/custom-cake/acti
   );
 }
 
+// --- Hidden or archived categories hide and block their products (#58) ---
+console.log("\n--- 13. Hidden Categories ---");
+const migration17 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0017_hide_products_in_hidden_categories.sql"),
+  "utf8"
+);
+assert(
+  /create policy products_read[\s\S]*c\.is_visible[\s\S]*c\.archived_at is null/.test(migration17),
+  "Hidden Categories: products_read hides products of hidden or archived categories from customers"
+);
+assert(
+  /before insert on public\.order_items[\s\S]*ensure_order_item_category_visible/.test(migration17) &&
+    /raise exception 'PRODUCT_UNAVAILABLE: %'/.test(migration17),
+  "Hidden Categories: orders reject items from hidden or archived categories with PRODUCT_UNAVAILABLE"
+);
+
 
 
 console.log("\n========================================================");
