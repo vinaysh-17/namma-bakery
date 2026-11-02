@@ -26,7 +26,7 @@ interface StaffDateNavigatorProps {
   onChange: (date: string) => void;
   /** Accessible noun used in control labels, e.g. "order" / "request" */
   noun: string;
-  /** Right-hand description, e.g. "Showing orders created on ..." */
+  /** Right-hand description, e.g. "Showing orders for pickup on ..." */
   children: React.ReactNode;
 }
 

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaffSession } from "@/lib/staff/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { notifyCustomRequestChanged } from "@/lib/realtime/broadcast";
+import { notifyCustomRequestChanged, notifyStaffChanged } from "@/lib/realtime/broadcast";
 import type { CustomCakeStatus } from "./types";
 
 /**
@@ -241,7 +241,8 @@ export async function acceptCustomCakeAsOrderAction(params: {
 }
 
 /**
- * Adds an internal staff note or customer message on a custom cake enquiry.
+ * Adds an internal staff note on a custom cake enquiry.
+ * Notes are stored with is_internal = true and are never shown to the customer.
  */
 export async function addCustomCakeStaffNoteAction(params: {
   requestId: string;
@@ -273,7 +274,8 @@ export async function addCustomCakeStaffNoteAction(params: {
     }
 
     revalidatePath("/staff");
-    await notifyCustomRequestChanged(params.requestId);
+    // Internal note: refresh staff screens only, not the customer's tracker.
+    await notifyStaffChanged();
     return { success: true };
   } catch (err) {
     console.error("[addCustomCakeStaffNoteAction] Execution failure:", err);

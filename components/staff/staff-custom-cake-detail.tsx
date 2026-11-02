@@ -640,7 +640,11 @@ export function StaffCustomCakeDetail({
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-foreground text-[11px] uppercase">
-                        {msg.sender === "STAFF" ? "Staff Memo" : "Customer Message"}
+                        {msg.sender === "CUSTOMER"
+                          ? "Customer Message"
+                          : msg.is_internal
+                            ? "Internal Note (staff only)"
+                            : "Sent to Customer"}
                       </span>
                       <span className="text-[10px] text-muted-foreground font-mono">
                         {formatIstDateTime(msg.created_at)}
@@ -660,7 +664,8 @@ export function StaffCustomCakeDetail({
             <form onSubmit={handleAddNote} className="flex gap-2 pt-2 border-t border-border/60">
               <input
                 type="text"
-                placeholder="Add a staff note or memo..."
+                placeholder="Add an internal note (staff only)..."
+                aria-label="Add an internal note, visible to staff only"
                 value={internalNoteInput}
                 onChange={(e) => setInternalNoteInput(e.target.value)}
                 disabled={isAddingNote}

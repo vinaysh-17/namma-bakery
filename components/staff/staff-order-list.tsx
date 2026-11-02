@@ -17,7 +17,13 @@ import { formatIstDate, formatIstTime, getIstDateString } from "@/lib/utils/date
 import { formatOrderItemVariant, formatOrderStatusLabel } from "@/lib/staff/formatters";
 
 interface StaffOrderListProps {
+  /** Orders due for pickup on the selected date. */
   orders: StaffOrder[];
+  /**
+   * Every loaded order. Used for the Pending filter (pending orders need action whatever
+   * their pickup day) and for search, so an order can always be found by number or phone.
+   */
+  allOrders?: StaffOrder[];
   selectedOrderId: string | null;
   activeFilter: OrderFilter;
   onSelectOrder: (order: StaffOrder) => void;
@@ -26,6 +32,7 @@ interface StaffOrderListProps {
 
 export function StaffOrderList({
   orders,
+  allOrders,
   selectedOrderId,
   activeFilter,
   onSelectOrder,
@@ -36,9 +43,13 @@ export function StaffOrderList({
 
   const todayIst = getIstDateString();
 
+  const isSearching = searchQuery.trim().length > 0;
+  const isAllDates = Boolean(allOrders) && (isSearching || activeFilter === "PENDING");
+
   // Filter orders based on active filter tab and search query
   const filteredOrders = React.useMemo(() => {
-    return orders.filter((order) => {
+    const source = isAllDates && allOrders ? allOrders : orders;
+    return source.filter((order) => {
       // 1. Status Filter (Controlled via Overview Summary Cards)
       if (activeFilter === "TODAY" || activeFilter === "ALL") {
         // Show all orders for the current set
@@ -75,7 +86,7 @@ export function StaffOrderList({
 
       return true;
     });
-  }, [orders, activeFilter, searchQuery]);
+  }, [orders, allOrders, isAllDates, activeFilter, searchQuery]);
 
   const getStatusBadge = (status: StaffOrder["status"]) => {
     switch (status) {
@@ -168,6 +179,14 @@ export function StaffOrderList({
         </div>
       </div>
 
+      {isAllDates && (
+        <p className="text-[11px] text-muted-foreground" role="status">
+          {isSearching
+            ? "Searching orders for every pickup date."
+            : "Showing pending orders for every pickup date."}
+        </p>
+      )}
+
       {/* Order Cards List (Primary status filtering is controlled via the Summary Cards above) */}
       {filteredOrders.length === 0 ? (
         <div className="rounded-sm border border-border bg-card p-8 text-center space-y-2">
@@ -177,10 +196,12 @@ export function StaffOrderList({
           </h3>
           <p className="text-xs text-muted-foreground max-w-sm mx-auto">
             {searchQuery
-              ? `No orders matching "${searchQuery}". Try searching with a different term.`
+              ? `No orders matching "${searchQuery}" on any date. Try searching with a different term.`
+              : activeFilter === "PENDING" && isAllDates
+              ? "There are no pending orders waiting for action."
               : isFiltered
-              ? `There are no ${getFilterDisplayName(activeFilter)} orders for this selected date.`
-              : "There are no orders taken/created for this selected date."}
+              ? `There are no ${getFilterDisplayName(activeFilter)} orders for pickup on this date.`
+              : "There are no orders due for pickup on this date."}
           </p>
           {isFiltered && (
             <button
@@ -196,10 +217,12 @@ export function StaffOrderList({
         <div className="space-y-2.5">
           {filteredOrders.map((order) => {
             const isSelected = selectedOrderId === order.id;
-            const isToday = getIstDateString(order.requested_pickup_at) === todayIst;
+            const pickupAt = order.confirmed_pickup_at || order.requested_pickup_at;
+            const isToday = getIstDateString(pickupAt) === todayIst;
             const hasCakeMessage = order.order_items?.some(
               (item) => Boolean(item.cake_message)
             );
+            const hasCustomerNotes = Boolean(order.customer_notes?.trim());
 
             return (
               <div
@@ -236,6 +259,11 @@ export function StaffOrderList({
                           <span>Custom Message</span>
                         </span>
                       )}
+                      {hasCustomerNotes && (
+                        <span className="rounded bg-sky-50 text-sky-900 border border-sky-200 text-[10px] font-semibold px-1.5 py-0.5 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                          Customer Notes
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
@@ -258,8 +286,8 @@ export function StaffOrderList({
                           Pickup:
                         </span>
                         <span>
-                          {formatIstDate(order.requested_pickup_at)},{" "}
-                          {formatIstTime(order.requested_pickup_at)}
+                          {formatIstDate(pickupAt)},{" "}
+                          {formatIstTime(pickupAt)}
                         </span>
                       </div>
                       <span className="font-heading text-sm font-bold text-foreground block mt-0.5">

@@ -316,10 +316,13 @@ export async function getCustomCakePublicViewAction(
         request_messages (
           sender,
           body,
-          created_at
+          created_at,
+          is_internal
         )
       `)
       .eq("public_token", token.trim())
+      // Internal staff notes must never reach the customer.
+      .eq("request_messages.is_internal", false)
       .maybeSingle();
 
     if (reqError) {
@@ -379,7 +382,9 @@ export async function getCustomCakePublicViewAction(
             valid_until: activeQuote.valid_until,
           }
         : null,
-      messages: requestRow.request_messages?.map((m: { sender: "CUSTOMER" | "STAFF"; body: string; created_at: string }) => ({
+      messages: requestRow.request_messages
+        ?.filter((m: { is_internal?: boolean }) => !m.is_internal)
+        .map((m: { sender: "CUSTOMER" | "STAFF"; body: string; created_at: string }) => ({
         sender: m.sender,
         body: m.body,
         at: m.created_at,

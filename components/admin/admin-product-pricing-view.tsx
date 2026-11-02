@@ -21,6 +21,8 @@ import { formatPaise } from "@/lib/utils/money";
 interface AdminProductPricingViewProps {
   product: AdminProduct;
   tiers: AdminPriceTierWithRules[];
+  /** All non-archived products, used to show which cakes share this product's price tier. */
+  products: AdminProduct[];
   onBack: () => void;
   onActionSuccess: () => void;
 }
@@ -38,6 +40,7 @@ const BASE_SUPPORTED_WEIGHTS = [
 export function AdminProductPricingView({
   product,
   tiers,
+  products,
   onBack,
   onActionSuccess,
 }: AdminProductPricingViewProps) {
@@ -51,12 +54,23 @@ export function AdminProductPricingView({
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [successMessage, setSuccessMessage] = React.useState<string | null>(null);
+  const [confirmedSharedChange, setConfirmedSharedChange] = React.useState(false);
 
   // Locate the tier assigned to this product
   const productTier = React.useMemo(() => {
     if (!product.price_tier_id) return null;
     return tiers.find((t) => t.id === product.price_tier_id) || null;
   }, [product.price_tier_id, tiers]);
+
+  // Price tiers are shared: every rule edited here applies to all cakes in the tier.
+  const tierProducts = React.useMemo(() => {
+    if (!product.price_tier_id) return [];
+    return products
+      .filter((p) => p.price_tier_id === product.price_tier_id && !p.archived_at)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [product.price_tier_id, products]);
+  const isSharedTier = tierProducts.length > 1;
+  const tierProductNames = tierProducts.map((p) => p.name).join(", ");
 
   // Pricing rules applying to this product, sorted cleanly by weight and dietary type
   const rules = React.useMemo(() => {
@@ -95,6 +109,7 @@ export function AdminProductPricingView({
     setEggType(rule.egg_type);
     setFinish(rule.finish);
     setRuleNote(rule.note || "");
+    setConfirmedSharedChange(false);
     setErrorMessage(null);
   };
 
@@ -107,6 +122,7 @@ export function AdminProductPricingView({
     setEggType("EGGLESS");
     setFinish("STANDARD");
     setRuleNote("");
+    setConfirmedSharedChange(false);
     setErrorMessage(null);
   };
 
@@ -120,6 +136,13 @@ export function AdminProductPricingView({
     e.preventDefault();
     if (!productTier) return;
     setErrorMessage(null);
+
+    if (isSharedTier && !confirmedSharedChange) {
+      setErrorMessage(
+        `This price is shared by ${tierProducts.length} cakes in tier ${productTier.name}. Tick the confirmation to continue.`
+      );
+      return;
+    }
 
     const priceNum = parseFloat(priceRupees);
     if (isNaN(priceNum) || priceNum <= 0) {
@@ -154,7 +177,8 @@ export function AdminProductPricingView({
     }
 
     setSuccessMessage(
-      editingRule ? "Pricing rule updated successfully." : "New pricing rule added."
+      `${editingRule ? "Pricing rule updated" : "New pricing rule added"} for tier ${productTier.name}` +
+        (isSharedTier ? ` (${tierProducts.length} cakes: ${tierProductNames}).` : ".")
     );
     setTimeout(() => setSuccessMessage(null), 3000);
     handleCloseModal();
@@ -162,6 +186,15 @@ export function AdminProductPricingView({
   };
 
   const handleToggleActive = async (rule: PriceTierRule) => {
+    if (
+      isSharedTier &&
+      productTier &&
+      !window.confirm(
+        `${rule.is_active ? "Disable" : "Enable"} this price for all ${tierProducts.length} cakes in tier ${productTier.name} (${tierProductNames})?`
+      )
+    ) {
+      return;
+    }
     const res = await togglePriceTierRuleAction(rule.id, !rule.is_active);
     if (res.success) {
       onActionSuccess();
@@ -186,7 +219,9 @@ export function AdminProductPricingView({
               {product.name} Pricing
             </h3>
             <p className="text-xs text-muted-foreground">
-              Weight, dietary, and finish pricing rules for {product.name}.
+              {productTier
+                ? `Weight, dietary, and finish prices from price tier ${productTier.name}.`
+                : `Weight, dietary, and finish pricing rules for ${product.name}.`}
             </p>
           </div>
         </div>
@@ -207,6 +242,20 @@ export function AdminProductPricingView({
         <div className="flex items-center gap-2 p-2.5 rounded text-xs bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
           <Check className="size-4 shrink-0" />
           <span>{successMessage}</span>
+        </div>
+      )}
+
+      {productTier && isSharedTier && (
+        <div
+          role="note"
+          className="flex items-start gap-2 p-3 rounded-sm text-xs bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800"
+        >
+          <AlertCircle className="size-4 shrink-0 mt-0.5" />
+          <p>
+            These prices belong to price tier <strong>{productTier.name}</strong>, which is shared by{" "}
+            <strong>{tierProducts.length} cakes</strong>: {tierProductNames}. Any change here changes
+            the price of every one of them.
+          </p>
         </div>
       )}
 
@@ -323,7 +372,9 @@ export function AdminProductPricingView({
           <div className="relative w-full max-w-md rounded-sm border border-border bg-card p-4 sm:p-6 shadow-xl space-y-4 my-auto">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="font-heading font-bold text-base text-foreground">
-                {editingRule ? `Edit Rule (${product.name})` : `Add Pricing Rule (${product.name})`}
+                {editingRule
+                  ? `Edit Rule (Tier ${productTier?.name ?? ""})`
+                  : `Add Pricing Rule (Tier ${productTier?.name ?? ""})`}
               </h3>
               <button
                 type="button"
@@ -432,6 +483,21 @@ export function AdminProductPricingView({
                 />
               </div>
 
+              {isSharedTier && productTier && (
+                <label className="flex items-start gap-2 p-2.5 rounded-sm border border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmedSharedChange}
+                    onChange={(e) => setConfirmedSharedChange(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    I understand this changes the price for all {tierProducts.length} cakes in tier{" "}
+                    {productTier.name}: {tierProductNames}.
+                  </span>
+                </label>
+              )}
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
                 <button
                   type="button"
@@ -443,7 +509,7 @@ export function AdminProductPricingView({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || (isSharedTier && !confirmedSharedChange)}
                   className="h-9 px-4 rounded-sm bg-caramel text-white font-semibold hover:bg-caramel/90 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting && <RotateCcw className="size-3.5 animate-spin" />}

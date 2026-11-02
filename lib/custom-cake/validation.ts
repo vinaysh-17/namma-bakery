@@ -32,7 +32,7 @@ export const customCakeFormSchema = z
       .trim()
       .min(2, "Please select or specify a flavour")
       .max(80, "Flavour cannot exceed 80 characters"),
-    eggType: z.enum(["EGGLESS", "REGULAR"], {
+    eggType: z.enum(["EGGLESS", "EGG"], {
       message: "Please choose eggless or regular (with egg)",
     }),
     weightGrams: z

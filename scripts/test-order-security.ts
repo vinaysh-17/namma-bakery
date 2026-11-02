@@ -36,6 +36,8 @@ import {
 } from "../lib/admin/validation";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
+import { calculateOperationalSummary, getOrderPickupDateIst } from "../lib/staff/summary";
+import type { StaffOrder } from "../lib/staff/types";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -314,6 +316,22 @@ const validCustomCake = {
 assert(
   customCakeFormSchema.safeParse(validCustomCake).success,
   "Valid custom cake baseline accepted"
+);
+
+// The egg type values must match the DB enum egg_type ('EGG','EGGLESS').
+const eggTypeEnum = fs
+  .readFileSync(path.join(process.cwd(), "supabase/migrations/0001_schema.sql"), "utf8")
+  .match(/create type egg_type\s+as enum \(([^)]*)\)/)?.[1]
+  .split(",")
+  .map((v) => v.trim().replace(/'/g, ""));
+assert(
+  !!eggTypeEnum &&
+    eggTypeEnum.every((v) => customCakeFormSchema.safeParse({ ...validCustomCake, eggType: v }).success),
+  "Custom cake accepts every DB egg_type value (EGG, EGGLESS)"
+);
+assert(
+  !customCakeFormSchema.safeParse({ ...validCustomCake, eggType: "REGULAR" }).success,
+  "Custom cake rejects egg types the DB enum does not have"
 );
 
 assert(
@@ -910,8 +928,101 @@ assert(
   "Tracking Session: Mask phone number safely for customer view"
 );
 
+// --- Custom cake internal staff notes stay staff-only (#56) ---
+console.log("\n--- 12. Custom Cake Internal Notes Privacy ---");
+const migration16 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0016_internal_custom_cake_notes.sql"),
+  "utf8"
+);
+assert(
+  /insert into request_messages \(request_id, sender, staff_id, body, is_internal\)\s*values \(p_request_id, 'STAFF', auth\.uid\(\), p_body, true\)/i.test(migration16),
+  "Internal Notes: post_request_message_staff stores notes as internal"
+);
+assert(
+  /request_messages m where m\.request_id = r\.id and not m\.is_internal/.test(migration16),
+  "Internal Notes: get_request_by_token excludes internal messages"
+);
+assert(
+  /create policy request_messages_read[\s\S]*not is_internal/.test(migration16),
+  "Internal Notes: RLS hides internal messages from signed-in customers"
+);
+for (const file of ["lib/custom-cake/tracking-actions.ts", "lib/custom-cake/actions.ts"]) {
+  const src = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+  const reads = (src.match(/request_messages \(/g) || []).length;
+  const filters = (src.match(/\.eq\("request_messages\.is_internal", false\)/g) || []).length;
+  assert(
+    reads > 0 && reads === filters,
+    `Internal Notes: every customer-facing request_messages read in ${file} filters is_internal`
+  );
+}
+
+// --- Hidden or archived categories hide and block their products (#58) ---
+console.log("\n--- 13. Hidden Categories ---");
+const migration17 = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/0017_hide_products_in_hidden_categories.sql"),
+  "utf8"
+);
+assert(
+  /create policy products_read[\s\S]*c\.is_visible[\s\S]*c\.archived_at is null/.test(migration17),
+  "Hidden Categories: products_read hides products of hidden or archived categories from customers"
+);
+assert(
+  /before insert on public\.order_items[\s\S]*ensure_order_item_category_visible/.test(migration17) &&
+    /raise exception 'PRODUCT_UNAVAILABLE: %'/.test(migration17),
+  "Hidden Categories: orders reject items from hidden or archived categories with PRODUCT_UNAVAILABLE"
+);
 
 
+
+// --- Order notes are not copied onto cakes as inscriptions (#59) ---
+console.log("\n--- 14. Checkout Notes vs Cake Inscriptions ---");
+const checkoutFormSrc = fs.readFileSync(path.join(process.cwd(), "components/checkout/checkout-form.tsx"), "utf8");
+assert(
+  !/cakeMessage\s*:[^,}]*customerNotes/.test(checkoutFormSrc),
+  "Checkout: special instructions are not copied into each cake's inscription"
+);
+
+// --- Employees can cancel orders: cancelled_by matches its check constraint (#60) ---
+console.log("\n--- 15. Staff Cancellation Role ---");
+const schemaSql = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0001_schema.sql"), "utf8");
+const migration18 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0018_staff_cancelled_by.sql"), "utf8");
+const allowedCancelledBy = (schemaSql.match(/cancelled_by\s+text check \(cancelled_by in \(([^)]*)\)\)/)?.[1] ?? "")
+  .split(",")
+  .map((v) => v.trim().replace(/'/g, ""));
+const writtenCancelledBy = [...(migration18.match(/cancelled_by\s+= case when p_to = 'CANCELLED' then \(([^)]*)\)/)?.[1] ?? "").matchAll(/'([A-Z]+)'/g)].map((m) => m[1]);
+assert(
+  writtenCancelledBy.length > 0 && writtenCancelledBy.every((v) => allowedCancelledBy.includes(v)),
+  `Staff Cancel: transition_order only writes allowed cancelled_by values (${writtenCancelledBy.join(", ")})`
+);
+assert(
+  !/cancelled_by\s+= case when p_to = 'CANCELLED' then v_role/.test(migration18),
+  "Staff Cancel: cancelled_by no longer stores the raw app_role (EMPLOYEE)"
+);
+
+// --- Staff queue is organised by pickup day, pending is global (#61) ---
+console.log("\n--- 16. Staff Queue Pickup Date ---");
+const mkOrder = (o: Partial<StaffOrder>) => ({ id: Math.random().toString(36), status: "ACCEPTED", ...o }) as StaffOrder;
+const queueOrders = [
+  // placed on Monday, picked up on Wednesday
+  mkOrder({ created_at: "2026-11-02T10:00:00+05:30", requested_pickup_at: "2026-11-04T16:00:00+05:30" }),
+  // placed 11:50 PM Tuesday, picked up Wednesday
+  mkOrder({ created_at: "2026-11-03T23:50:00+05:30", requested_pickup_at: "2026-11-04T11:00:00+05:30" }),
+  // pending order for Friday
+  mkOrder({ status: "PENDING", created_at: "2026-11-03T09:00:00+05:30", requested_pickup_at: "2026-11-06T12:00:00+05:30" }),
+  // requested Wednesday, bakery confirmed Thursday
+  mkOrder({ created_at: "2026-11-03T09:00:00+05:30", requested_pickup_at: "2026-11-04T10:00:00+05:30", confirmed_pickup_at: "2026-11-05T10:00:00+05:30" }),
+];
+const wednesday = calculateOperationalSummary(queueOrders, "2026-11-04");
+assert(wednesday.totalToday === 2, `Staff Queue: Wednesday shows the 2 orders due for pickup that day (got ${wednesday.totalToday})`);
+assert(wednesday.pending === 1, `Staff Queue: Pending counts pending orders for every pickup date (got ${wednesday.pending})`);
+assert(
+  getOrderPickupDateIst(queueOrders[3]) === "2026-11-05",
+  "Staff Queue: the confirmed pickup time takes precedence over the requested one"
+);
+assert(
+  getOrderPickupDateIst(queueOrders[1]) === "2026-11-04",
+  "Staff Queue: an order placed late at night is grouped under its pickup day"
+);
 
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
