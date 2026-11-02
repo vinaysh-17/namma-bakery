@@ -15,6 +15,8 @@ import path from "node:path";
 import { placeOrderInputSchema, lookupOrderTokenSchema } from "../lib/orders/validation";
 import {
   customCakeFormSchema,
+  customCakePickupDateSchema,
+  getEarliestCustomCakePickupDate,
   customCakeTrackingInputSchema,
   validateReferenceImageFile,
   validateImageMagicBytes,
@@ -46,6 +48,7 @@ import {
 import { getCustomCakeStaffStatus } from "../lib/staff/custom-cake-workflow";
 import type { CustomCakeLinkedOrder, CustomCakeRequest } from "../lib/custom-cake/types";
 import type { OrderStatus } from "../lib/orders/types";
+import { formatIstDate, getIstDateString } from "../lib/utils/date";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -314,7 +317,8 @@ const validCustomCake = {
   eggType: "EGGLESS" as const,
   weightGrams: 1500,
   shape: "Round",
-  preferredPickupDate: "2026-10-25",
+  // A week from today, so the baseline stays valid whenever the suite runs.
+  preferredPickupDate: getEarliestCustomCakePickupDate(Date.now() + 6 * 24 * 60 * 60 * 1000),
   preferredPickupTime: "2:00 PM – 4:00 PM",
   description: "Peppa pig themed 2-tier cake with pastel clouds and rainbow piping",
   messageOnCake: "Happy 3rd Birthday Anaya!",
@@ -1172,6 +1176,68 @@ const broadcastSrc = fs.readFileSync(path.join(process.cwd(), "lib/realtime/broa
 assert(
   /customRequestTopic\(data\.custom_request_id\)/.test(broadcastSrc),
   "Customer Status: a change to a custom cake order also refreshes the customer's custom cake tracker"
+);
+
+// --- Custom cake pickup date must be tomorrow or later in IST (#64) ---
+console.log("\n--- 19. Custom Cake Pickup Date Needs A Day's Notice ---");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const todayIst = getIstDateString();
+const tomorrowIst = getEarliestCustomCakePickupDate();
+assert(
+  getEarliestCustomCakePickupDate(new Date("2026-11-03T18:00:00Z")) === "2026-11-04",
+  "Pickup Date: at 11:30 PM IST the earliest pickup date is the next day"
+);
+assert(
+  getEarliestCustomCakePickupDate(new Date("2026-11-03T20:00:00Z")) === "2026-11-05",
+  "Pickup Date: at 1:30 AM IST (still the previous day in UTC) the earliest date follows IST"
+);
+assert(
+  !customCakeFormSchema.safeParse({ ...validCustomCake, preferredPickupDate: todayIst }).success,
+  "Pickup Date: the server rejects a same-day pickup date"
+);
+assert(
+  !customCakeFormSchema.safeParse({
+    ...validCustomCake,
+    preferredPickupDate: getIstDateString(Date.now() - DAY_MS),
+  }).success,
+  "Pickup Date: the server rejects a past pickup date"
+);
+assert(
+  customCakeFormSchema.safeParse({ ...validCustomCake, preferredPickupDate: tomorrowIst }).success,
+  "Pickup Date: tomorrow (IST) is accepted"
+);
+const tooSoon = customCakePickupDateSchema.safeParse(todayIst);
+assert(
+  !tooSoon.success &&
+    /at least a day's notice/.test(tooSoon.error.issues[0]?.message ?? "") &&
+    (tooSoon.error.issues[0]?.message ?? "").includes(
+      formatIstDate(`${tomorrowIst}T12:00:00+05:30`)
+    ),
+  "Pickup Date: the too-soon message names the earliest date the customer can pick"
+);
+assert(
+  !customCakePickupDateSchema.safeParse("2027-02-30").success &&
+    !customCakePickupDateSchema.safeParse("2027-13-01").success,
+  "Pickup Date: dates that don't exist (30 Feb, month 13) are rejected"
+);
+const emptyDate = customCakePickupDateSchema.safeParse("");
+const missingDate = customCakePickupDateSchema.safeParse(null);
+assert(
+  !emptyDate.success &&
+    !missingDate.success &&
+    emptyDate.error.issues[0]?.message === "Please choose a pickup date." &&
+    missingDate.error.issues[0]?.message === "Please choose a pickup date.",
+  "Pickup Date: an empty or missing date asks the customer to choose one"
+);
+const customCakeFormSrc = fs.readFileSync(
+  path.join(process.cwd(), "components/custom-cake/custom-cake-form.tsx"),
+  "utf8"
+);
+assert(
+  /customCakePickupDateSchema\.safeParse\(preferredPickupDate\)/.test(customCakeFormSrc) &&
+    /min=\{tomorrowIst\}/.test(customCakeFormSrc) &&
+    /getEarliestCustomCakePickupDate\(\)/.test(customCakeFormSrc),
+  "Pickup Date: the form checks the date with the same rule before it submits"
 );
 
 console.log("\n========================================================");

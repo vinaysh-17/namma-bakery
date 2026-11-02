@@ -22,7 +22,10 @@ import {
 } from "lucide-react";
 import { submitCustomCakeRequestAction } from "@/lib/custom-cake/actions";
 import type { CustomCakeEggType } from "@/lib/custom-cake/types";
-import { getIstDateString } from "@/lib/utils/date";
+import {
+  customCakePickupDateSchema,
+  getEarliestCustomCakePickupDate,
+} from "@/lib/custom-cake/validation";
 
 const CAKE_OCCASIONS = [
   "Birthday Celebration",
@@ -76,12 +79,9 @@ const PICKUP_WINDOWS = [
 export function CustomCakeForm() {
   const router = useRouter();
 
-  // Tomorrow in IST as minimum pickup date
-  const tomorrowIst = React.useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return getIstDateString(d);
-  }, []);
+  // Tomorrow in IST as minimum pickup date. The submit check works it out again, so a
+  // page left open past midnight can't send a date that has become too soon.
+  const tomorrowIst = React.useMemo(() => getEarliestCustomCakePickupDate(), []);
 
   // Form states
   const [customerName, setCustomerName] = React.useState("");
@@ -117,11 +117,13 @@ export function CustomCakeForm() {
   const [descriptionError, setDescriptionError] = React.useState<string | null>(null);
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [phoneError, setPhoneError] = React.useState<string | null>(null);
+  const [dateError, setDateError] = React.useState<string | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const descriptionRef = React.useRef<HTMLTextAreaElement | null>(null);
   const nameRef = React.useRef<HTMLInputElement | null>(null);
   const phoneRef = React.useRef<HTMLInputElement | null>(null);
+  const dateRef = React.useRef<HTMLInputElement | null>(null);
 
   // Post-submission state
   const [submittedEnquiry, setSubmittedEnquiry] = React.useState<{
@@ -160,6 +162,7 @@ export function CustomCakeForm() {
     setDescriptionError(null);
     setNameError(null);
     setPhoneError(null);
+    setDateError(null);
 
     setCustomerName("");
     setCustomerPhone("");
@@ -222,6 +225,7 @@ export function CustomCakeForm() {
     setDescriptionError(null);
     setNameError(null);
     setPhoneError(null);
+    setDateError(null);
 
     // Basic client checks
     if (!customerName.trim() || customerName.trim().length < 2) {
@@ -249,6 +253,17 @@ export function CustomCakeForm() {
       setErrorMessage(msg);
       descriptionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       descriptionRef.current?.focus();
+      return;
+    }
+
+    // Same rule as the server: pickup from tomorrow (IST) onwards.
+    const dateCheck = customCakePickupDateSchema.safeParse(preferredPickupDate);
+    if (!dateCheck.success) {
+      const msg = dateCheck.error.issues[0]?.message || "Please choose a pickup date.";
+      setDateError(msg);
+      setErrorMessage(msg);
+      dateRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      dateRef.current?.focus();
       return;
     }
 
@@ -810,15 +825,38 @@ export function CustomCakeForm() {
             <div className="relative">
               <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-caramel" />
               <input
+                ref={dateRef}
                 id="preferredPickupDate"
                 type="date"
                 required
                 min={tomorrowIst}
                 value={preferredPickupDate}
-                onChange={(e) => setPreferredPickupDate(e.target.value)}
-                className="w-full min-h-[48px] rounded-sm border border-border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                onChange={(e) => {
+                  setPreferredPickupDate(e.target.value);
+                  if (dateError && customCakePickupDateSchema.safeParse(e.target.value).success) {
+                    setDateError(null);
+                    setErrorMessage((prev) => (prev === dateError ? null : prev));
+                  }
+                }}
+                aria-invalid={!!dateError}
+                aria-describedby={dateError ? "preferredPickupDate-error" : undefined}
+                className={`w-full min-h-[48px] rounded-sm border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none transition-colors ${
+                  dateError
+                    ? "border-destructive ring-1 ring-destructive focus-visible:ring-2 focus-visible:ring-destructive"
+                    : "border-border focus-visible:ring-2 focus-visible:ring-caramel"
+                }`}
               />
             </div>
+            {dateError && (
+              <div
+                id="preferredPickupDate-error"
+                role="alert"
+                className="flex items-center gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
+              >
+                <AlertCircle className="size-3.5 shrink-0" />
+                <span>{dateError}</span>
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">
               Custom celebration cakes typically require 24–48 hours advance notice.
             </p>
