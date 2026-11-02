@@ -757,6 +757,7 @@ export function AdminCatalogView({
           <AdminProductPricingView
             product={selectedPricingProduct}
             tiers={priceTiers}
+            products={products}
             onBack={() => {
               setSelectedPricingProduct(null);
               setViewMode("PRODUCTS");
