@@ -167,7 +167,8 @@ export async function getMenuProducts(options?: {
           label,
           price_paise,
           is_available,
-          sort_order
+          sort_order,
+          archived_at
         ),
         price_tiers (
           id,
@@ -278,7 +279,8 @@ export const getProductBySlug = cache(
           label,
           price_paise,
           is_available,
-          sort_order
+          sort_order,
+          archived_at
         ),
         price_tiers (
           id,

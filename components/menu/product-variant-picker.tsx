@@ -3,7 +3,14 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Check, ShoppingBag } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { ProductVariant } from "@/lib/menu/types";
+import {
+  describeInvalidSelection,
+  getOrderableVariants,
+  resolveSimpleProductSelection,
+} from "@/lib/menu/variant-availability";
+import { checkItemBeforeAdd } from "@/lib/cart/add-check";
 import { formatPaise } from "@/lib/utils/money";
 import { useCart } from "@/lib/cart/context";
 import { generateCartItemKey } from "@/lib/cart/key";
@@ -32,8 +39,11 @@ export function ProductVariantPicker({
   startingPricePaise,
 }: ProductVariantPickerProps) {
   const { addItem } = useCart();
+  const router = useRouter();
   const [justAdded, setJustAdded] = useState(false);
   const [quantity, setQuantity] = useState(1);
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  const [isCheckingAdd, setIsCheckingAdd] = useState(false);
 
   useEffect(() => {
     if (!justAdded) return;
@@ -41,39 +51,55 @@ export function ProductVariantPicker({
     return () => clearTimeout(timer);
   }, [justAdded]);
 
-  const availableVariants = variants.filter(
-    (v) => v.is_available && v.price_paise > 0
-  );
-
+  // The variant shown as selected is a real selection: it starts as the first orderable variant
+  // and is never silently replaced if it later becomes unavailable (#77).
   const [selectedVariantId, setSelectedVariantId] = useState<string>(
-    availableVariants[0]?.id ?? ""
+    () => getOrderableVariants(variants)[0]?.id ?? ""
   );
 
-  const activeVariant =
-    availableVariants.find((v) => v.id === selectedVariantId) ??
-    availableVariants[0];
-
-  const hasDefinedVariants = variants.length > 0;
-
-  const currentPricePaise = activeVariant
-    ? activeVariant.price_paise
-    : !hasDefinedVariants &&
-      typeof startingPricePaise === "number" &&
-      startingPricePaise > 0
-    ? startingPricePaise
+  // One shared rule for "which variant, what price, can it be ordered" (#77), the same one the
+  // menu card uses. A product whose variants are all unavailable cannot be added.
+  const selection = resolveSimpleProductSelection({
+    product: {
+      is_available: product.is_available,
+      orderable_online: product.orderable_online,
+      product_variants: variants,
+    },
+    selectedVariantId,
+    startingPricePaise,
+  });
+  const availableVariants = selection.orderableVariants;
+  const activeVariant = selection.activeVariant;
+  const currentPricePaise = selection.pricePaise;
+  const purchaseState = selection.purchaseState;
+  const isOrderable = purchaseState === "AVAILABLE";
+  const canAddToCart = selection.canOrder && !isCheckingAdd;
+  const selectionInvalid = selection.selectionInvalid;
+  const invalidSelectionMessage = selectionInvalid
+    ? describeInvalidSelection(variants.find((v) => v.id === selectedVariantId)?.label)
     : null;
-
-  const isOrderable = product.is_available && product.orderable_online;
-  const canAddToCart =
-    isOrderable &&
-    currentPricePaise !== null &&
-    (!hasDefinedVariants || activeVariant !== undefined);
 
   const totalPricePaise =
     currentPricePaise !== null ? currentPricePaise * quantity : null;
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!canAddToCart || currentPricePaise === null) return;
+
+    // The page may have been open for a while: confirm with the server first
+    setIsCheckingAdd(true);
+    const blocked = await checkItemBeforeAdd({
+      productId: product.id,
+      variantId: activeVariant?.id,
+      quantity,
+      productName: product.name,
+    });
+    setIsCheckingAdd(false);
+    if (blocked) {
+      setBlockedMessage(blocked);
+      router.refresh();
+      return;
+    }
+    setBlockedMessage(null);
 
     const itemKey = generateCartItemKey({
       productId: product.id,
@@ -111,6 +137,8 @@ export function ProductVariantPicker({
           <span className="font-heading text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
             {currentPricePaise !== null
               ? formatPaise(currentPricePaise)
+              : selectionInvalid
+              ? "Select a size"
               : "Ask in store"}
           </span>
           {activeVariant && availableVariants.length > 1 && (
@@ -122,11 +150,16 @@ export function ProductVariantPicker({
       </div>
 
       {/* Multiple variants selector if applicable */}
-      {availableVariants.length > 1 && (
+      {(availableVariants.length > 1 || (selectionInvalid && availableVariants.length > 0)) && (
         <div className="border-t border-border pt-4">
           <label className="block text-xs font-medium text-foreground uppercase tracking-wider">
             Select Portion / Size
           </label>
+          {invalidSelectionMessage && (
+            <p role="alert" className="mt-2 text-xs font-medium text-destructive">
+              {invalidSelectionMessage}
+            </p>
+          )}
           <div className="mt-2.5 flex flex-wrap gap-2">
             {availableVariants.map((variant) => {
               const isSelected = variant.id === activeVariant?.id;
@@ -135,7 +168,11 @@ export function ProductVariantPicker({
                 <button
                   key={variant.id}
                   type="button"
-                  onClick={() => setSelectedVariantId(variant.id)}
+                  onClick={() => {
+                    setBlockedMessage(null);
+                    setSelectedVariantId(variant.id);
+                  }}
+                  aria-pressed={isSelected}
                   className={`flex h-12 items-center justify-between gap-3 rounded-sm px-4 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
                     isSelected
                       ? "border-2 border-caramel bg-caramel/10 text-caramel font-semibold"
@@ -172,7 +209,9 @@ export function ProductVariantPicker({
           disabled={!canAddToCart}
           onClick={handleAddToCart}
           aria-label={
-            totalPricePaise !== null
+            selectionInvalid
+              ? `Choose an option for ${product.name} before adding it to the cart`
+              : totalPricePaise !== null
               ? `Add ${quantity} of ${product.name}${
                   activeVariant ? ` (${activeVariant.label})` : ""
                 } to cart for ${formatPaise(totalPricePaise)}`
@@ -186,15 +225,26 @@ export function ProductVariantPicker({
         >
           <ShoppingBag className="h-4 w-4" aria-hidden="true" />
           <span>
-            {!product.is_available
+            {!product.is_available || purchaseState === "VARIANTS_UNAVAILABLE"
               ? "Currently Unavailable"
               : !product.orderable_online
               ? "Available In-Store Only"
+              : selectionInvalid
+              ? "Select a size to continue"
               : totalPricePaise !== null
               ? `Add to Cart • ${formatPaise(totalPricePaise)}`
               : "Unavailable"}
           </span>
         </button>
+
+        {blockedMessage && !selectionInvalid && (
+          <p
+            role="alert"
+            className="rounded-sm border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs font-medium text-destructive"
+          >
+            {blockedMessage}
+          </p>
+        )}
 
         {/* Confirmation feedback */}
         {justAdded && (

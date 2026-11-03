@@ -62,6 +62,14 @@ import {
   describeInvalidSlot,
   type SlotRow,
 } from "../lib/pickup/slot-validity";
+import {
+  getOrderableVariants,
+  hasAnyVariants,
+  getSimpleProductPurchaseState,
+  resolveSimpleProductSelection,
+  describeUnavailableOnAdd,
+  describeInvalidSelection,
+} from "../lib/menu/variant-availability";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -1695,6 +1703,160 @@ assert(
   "Slot #76: if the database still refuses the pickup time, the slot is cleared so the customer chooses again"
 );
 assert(/disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc), "Slot #76: the live-cart gate from #75 still blocks Place Order");
+
+// --- Menu cards must not offer products whose variants are all unavailable (GitHub issue #77) ---
+console.log("\n--- Unavailable Variants Cannot Be Added (#77) ---");
+
+const mkVariant = (id: string, over: Partial<{ is_available: boolean; price_paise: number; archived_at: string | null; sort_order: number }> = {}) => ({
+  id,
+  is_available: true,
+  price_paise: 5000,
+  archived_at: null as string | null,
+  sort_order: 0,
+  ...over,
+});
+const mkProduct = (variants: ReturnType<typeof mkVariant>[] | null, over: Partial<{ is_available: boolean; orderable_online: boolean }> = {}) => ({
+  is_available: true,
+  orderable_online: true,
+  product_variants: variants,
+  ...over,
+});
+// Mirrors lib/menu/queries.ts calculateStartingPricePaise: it deliberately falls back to the
+// prices of unavailable variants (so the card can still show a "from" price), which is why the
+// starting price must never decide whether a product with variants can be ordered.
+const startingFor = (variants: ReturnType<typeof mkVariant>[]) => {
+  const pool = variants.filter((v) => v.is_available).length > 0 ? variants.filter((v) => v.is_available) : variants;
+  const prices = pool.map((v) => v.price_paise).filter((x) => x > 0);
+  return prices.length ? Math.min(...prices) : null;
+};
+
+// 1. all variants unavailable: the exact bug
+const allOff = [mkVariant("v1", { is_available: false }), mkVariant("v2", { is_available: false, price_paise: 7000 })];
+const allOffSel = resolveSimpleProductSelection({ product: mkProduct(allOff), selectedVariantId: "v1", startingPricePaise: startingFor(allOff) });
+assert(startingFor(allOff) === 5000, "Variants #77: (precondition) the starting price still falls back to unavailable variants");
+assert(allOffSel.canOrder === false && allOffSel.activeVariant === undefined && allOffSel.pricePaise === null, "Variants #77: all variants unavailable -> nothing can be added and no variant-less price is used");
+assert(allOffSel.purchaseState === "VARIANTS_UNAVAILABLE", "Variants #77: all variants unavailable -> the card state is 'variants unavailable'");
+// 2. some unavailable: the available one stays selectable and addable
+const someOff = [mkVariant("v1", { is_available: false, sort_order: 1 }), mkVariant("v2", { price_paise: 7000, sort_order: 2 }), mkVariant("v3", { price_paise: 9000, sort_order: 3 })];
+const someSel = resolveSimpleProductSelection({ product: mkProduct(someOff), selectedVariantId: "v3", startingPricePaise: startingFor(someOff) });
+assert(someSel.canOrder && someSel.activeVariant?.id === "v3" && someSel.pricePaise === 9000 && someSel.purchaseState === "AVAILABLE", "Variants #77: some variants available -> an available variant can be selected and added");
+assert(getOrderableVariants(someOff).map((v) => v.id).join() === "v2,v3", "Variants #77: unavailable variants are not offered for selection");
+// 2b. a chosen variant that becomes unavailable is NEVER silently replaced by another one
+const initialDefault = resolveSimpleProductSelection({ product: mkProduct(someOff), selectedVariantId: "", startingPricePaise: startingFor(someOff) });
+assert(initialDefault.activeVariant?.id === "v2" && !initialDefault.selectionInvalid && initialDefault.canOrder, "Variants #77: with nothing chosen yet, the first orderable variant is the default");
+const chosenStillOk = resolveSimpleProductSelection({ product: mkProduct(someOff), selectedVariantId: "v3", startingPricePaise: startingFor(someOff) });
+assert(chosenStillOk.activeVariant?.id === "v3" && !chosenStillOk.selectionInvalid && chosenStillOk.pricePaise === 9000 && chosenStillOk.canOrder, "Variants #77: a chosen variant that is still available stays selected (normal behaviour preserved)");
+// Large (v3, 9000) was chosen, then switched off while Regular-like v2 (7000) stays available
+const largeSwitchedOff = [mkVariant("v1", { is_available: false, sort_order: 1 }), mkVariant("v2", { price_paise: 7000, sort_order: 2 }), mkVariant("v3", { price_paise: 9000, is_available: false, sort_order: 3 })];
+const pickedOff = resolveSimpleProductSelection({ product: mkProduct(largeSwitchedOff), selectedVariantId: "v3", startingPricePaise: 7000 });
+assert(
+  pickedOff.selectionInvalid === true && pickedOff.activeVariant === undefined && pickedOff.pricePaise === null && pickedOff.canOrder === false,
+  "Variants #77: the chosen variant becomes unavailable -> selection is invalid, NOT replaced by another variant, no price, cannot add"
+);
+assert(pickedOff.orderableVariants.map((v) => v.id).join() === "v2", "Variants #77: the remaining available variant is still offered for an explicit choice");
+const reChosen = resolveSimpleProductSelection({ product: mkProduct(largeSwitchedOff), selectedVariantId: "v2", startingPricePaise: 7000 });
+assert(!reChosen.selectionInvalid && reChosen.activeVariant?.id === "v2" && reChosen.pricePaise === 7000 && reChosen.canOrder, "Variants #77: after the customer explicitly chooses another variant it can be added");
+const chosenRemoved = resolveSimpleProductSelection({ product: mkProduct([mkVariant("v2", { price_paise: 7000 })]), selectedVariantId: "gone", startingPricePaise: 7000 });
+assert(chosenRemoved.selectionInvalid && !chosenRemoved.canOrder, "Variants #77: a chosen variant that no longer exists at all is also an invalid selection");
+const allGoneAfterChoice = resolveSimpleProductSelection({ product: mkProduct(allOff), selectedVariantId: "v1", startingPricePaise: 5000 });
+assert(!allGoneAfterChoice.selectionInvalid && !allGoneAfterChoice.canOrder && allGoneAfterChoice.purchaseState === "VARIANTS_UNAVAILABLE", "Variants #77: when NOTHING is orderable the product is 'variants unavailable' (not an invalid selection)");
+assert(
+  /"Large" is no longer available/.test(describeInvalidSelection("Large")) && /choose another option/i.test(describeInvalidSelection("Large")) && /option you chose is no longer available/.test(describeInvalidSelection(null)),
+  "Variants #77: the invalid-selection message names the variant (or falls back gracefully) and asks for an explicit choice"
+);
+// 3. product without variants keeps its product-level behaviour
+const noVariantsPriced = resolveSimpleProductSelection({ product: mkProduct([]), selectedVariantId: "", startingPricePaise: 4500 });
+assert(hasAnyVariants([]) === false && noVariantsPriced.pricePaise === 4500 && noVariantsPriced.canOrder, "Variants #77: a product with no variants but a price keeps its existing behaviour");
+assert(!resolveSimpleProductSelection({ product: mkProduct(null), selectedVariantId: "", startingPricePaise: null }).canOrder, "Variants #77: a product with no variants and no price still cannot be added");
+// 4. product itself unavailable / in-store only
+const productOff = resolveSimpleProductSelection({ product: mkProduct([mkVariant("v1")], { is_available: false }), selectedVariantId: "v1", startingPricePaise: 5000 });
+assert(productOff.purchaseState === "PRODUCT_UNAVAILABLE" && !productOff.canOrder, "Variants #77: a product that is switched off cannot be added even if its variant is available");
+const inStore = resolveSimpleProductSelection({ product: mkProduct([mkVariant("v1")], { orderable_online: false }), selectedVariantId: "v1", startingPricePaise: 5000 });
+assert(inStore.purchaseState === "IN_STORE_ONLY" && !inStore.canOrder, "Variants #77: an in-store-only product still cannot be added online");
+// 5. archived and unpriced variants
+const archivedOnly = [mkVariant("v1", { archived_at: "2026-11-01T00:00:00Z" })];
+assert(!hasAnyVariants(archivedOnly) && !getOrderableVariants(archivedOnly).length, "Variants #77: archived variants are neither offered nor counted as variants");
+assert(getOrderableVariants([mkVariant("v1", { price_paise: 0 })]).length === 0, "Variants #77: a variant without a price cannot be ordered");
+const mixedArchived = [mkVariant("v1", { archived_at: "2026-11-01T00:00:00Z" }), mkVariant("v2", { is_available: false })];
+assert(getSimpleProductPurchaseState(mkProduct(mixedArchived)) === "VARIANTS_UNAVAILABLE", "Variants #77: archived + unavailable variants together still count as 'has variants, none orderable'");
+// 6. the variant becomes unavailable while the menu is open: re-resolving with fresh data blocks it
+const openMenuBefore = [mkVariant("v1"), mkVariant("v2", { sort_order: 1 })];
+const openMenuAfter = [mkVariant("v1", { is_available: false }), mkVariant("v2", { is_available: false, sort_order: 1 })];
+assert(
+  resolveSimpleProductSelection({ product: mkProduct(openMenuBefore), selectedVariantId: "v1", startingPricePaise: 5000 }).canOrder === true &&
+    resolveSimpleProductSelection({ product: mkProduct(openMenuAfter), selectedVariantId: "v1", startingPricePaise: 5000 }).canOrder === false,
+  "Variants #77: when refreshed data shows every variant off, the same card can no longer be added"
+);
+// 7. messages
+assert(
+  /Veg Puff is no longer available/.test(describeUnavailableOnAdd("PRODUCT_UNAVAILABLE", "Veg Puff")) &&
+    /That option for Veg Puff is no longer available/.test(describeUnavailableOnAdd("OPTION_NOT_AVAILABLE", "Veg Puff")) &&
+    !/PRODUCT_|OPTION_/.test(describeUnavailableOnAdd("OPTION_NOT_AVAILABLE", "x")),
+  "Variants #77: the 'no longer available' message names the item and has no internal codes"
+);
+
+// Wiring (static)
+const cardSrc = fs.readFileSync(path.join(process.cwd(), "components/menu/product-card.tsx"), "utf8");
+const pickerSrc = fs.readFileSync(path.join(process.cwd(), "components/menu/product-variant-picker.tsx"), "utf8");
+const addCheckSrc = fs.readFileSync(path.join(process.cwd(), "lib/cart/add-check.ts"), "utf8");
+const menuQueriesSrc = fs.readFileSync(path.join(process.cwd(), "lib/menu/queries.ts"), "utf8");
+assert(
+  /resolveSimpleProductSelection\(/.test(cardSrc) && /resolveSimpleProductSelection\(/.test(pickerSrc),
+  "Variants #77: the menu card and the product page use the same availability decision"
+);
+assert(
+  !/hasDefinedVariants = availableVariants\.length/.test(cardSrc) && !/\.filter\(\s*\(v\) => v\.is_available/.test(cardSrc) && !/\.filter\(\s*\(v\) => v\.is_available/.test(pickerSrc),
+  "Variants #77: the old 'variants exist only if some are available' rule is gone from both components"
+);
+assert(
+  cardSrc.indexOf("await checkItemBeforeAdd(") > 0 && cardSrc.indexOf("await checkItemBeforeAdd(") < cardSrc.indexOf("addItem({") &&
+    pickerSrc.indexOf("await checkItemBeforeAdd(") > 0 && pickerSrc.indexOf("await checkItemBeforeAdd(") < pickerSrc.indexOf("addItem({"),
+  "Variants #77: the server confirms the item before it is added to the cart (stale open menu)"
+);
+assert(
+  /validateCartAction\(/.test(addCheckSrc) && /check\.status !== "OK"/.test(addCheckSrc) && /catch \{\s*return null;/.test(addCheckSrc),
+  "Variants #77: the add-time check reuses the live cart check (#75) and never blocks when it cannot run (place_order still decides)"
+);
+assert(
+  (menuQueriesSrc.match(/sort_order,\s*archived_at\s*\)/g) || []).length >= 2,
+  "Variants #77: menu queries load archived_at for variants so archived ones are excluded"
+);
+assert(
+  /disabled=\{!canAddToCart\}/.test(cardSrc) && /disabled=\{!canOrder\}/.test(cardSrc) && /Currently unavailable/.test(cardSrc) && /disabled=\{!canAddToCart\}/.test(pickerSrc),
+  "Variants #77: Add and the quantity control are disabled and the card says it is unavailable"
+);
+assert(
+  /useState<string>\(\s*\(\) => getOrderableVariants\(product\.product_variants\)\[0\]\?\.id \?\? ""/.test(cardSrc) &&
+    /useState<string>\(\s*\(\) => getOrderableVariants\(variants\)\[0\]\?\.id \?\? ""/.test(pickerSrc),
+  "Variants #77: the variant shown as selected is a real selection from the start (so a later swap can be detected)"
+);
+assert(
+  /selection\.selectionInvalid/.test(cardSrc) && /selection\.selectionInvalid/.test(pickerSrc) &&
+    /invalidSelectionMessage/.test(cardSrc) && /invalidSelectionMessage/.test(pickerSrc) && /role="alert"/.test(pickerSrc),
+  "Variants #77: both the card and the product page show a message when the chosen variant became unavailable"
+);
+assert(
+  /Select a size to continue/.test(pickerSrc) && /canAddToCart = selection\.canOrder && !isCheckingAdd/.test(pickerSrc),
+  "Variants #77: Add to Cart on the product page stays disabled until a valid variant is chosen"
+);
+assert(
+  /\(selectionInvalid && availableVariants\.length === 1\)/.test(cardSrc) && /selectionInvalid && availableVariants\.length > 0/.test(pickerSrc),
+  "Variants #77: the variant choices are shown even when only ONE variant remains, so the customer can pick it explicitly"
+);
+// Accessibility (static): names and states of the controls say what is going on
+assert(
+  /aria-label=\{canOrder \? `Select quantity for \$\{product\.name\}` : orderBlockedLabel\}/.test(cardSrc) &&
+    /is currently unavailable`/.test(cardSrc) && /is available in-store only`/.test(cardSrc) && /Choose an option for \$\{product\.name\} first/.test(cardSrc),
+  "A11y #77: the disabled Add control says why the product cannot be ordered (unavailable / in-store / choose an option)"
+);
+assert(
+  /aria-label=\{detailsLabel\}/.test(cardSrc) && /\(currently unavailable\)/.test(cardSrc) && /\(in-store only\)/.test(cardSrc),
+  "A11y #77: the card link's accessible name includes the Unavailable / In-Store status that the visual badge shows"
+);
+assert(
+  (cardSrc.match(/aria-pressed=\{isSelected\}/g) || []).length === 1 && (pickerSrc.match(/aria-pressed=\{isSelected\}/g) || []).length === 1,
+  "A11y #77: variant choices expose which one is selected (aria-pressed)"
+);
 
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);

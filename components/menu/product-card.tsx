@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Cake,
   UtensilsCrossed,
@@ -12,7 +13,13 @@ import {
   Plus,
   Minus,
 } from "lucide-react";
-import type { Product, ProductVariant } from "@/lib/menu/types";
+import type { Product } from "@/lib/menu/types";
+import {
+  describeInvalidSelection,
+  getOrderableVariants,
+  resolveSimpleProductSelection,
+} from "@/lib/menu/variant-availability";
+import { checkItemBeforeAdd } from "@/lib/cart/add-check";
 import { formatPaise } from "@/lib/utils/money";
 import { hasMultiplePrices } from "@/lib/menu/utils";
 import { resolvePrimaryProductImage } from "@/lib/menu/product-images";
@@ -138,19 +145,55 @@ function CakeProductCard({ product }: { product: Product }) {
  */
 function SimpleProductCard({ product }: { product: Product }) {
   const { addItem } = useCart();
+  const router = useRouter();
   const categorySlug = product.category?.slug ?? "menu";
   const { url: imageUrl, alt: imageAlt } = resolvePrimaryProductImage(product);
 
-  const availableVariants: ProductVariant[] = (product.product_variants ?? [])
-    .filter((v) => v.is_available && v.price_paise > 0)
-    .sort((a, b) => a.sort_order - b.sort_order);
-
+  // The variant shown as selected is a real selection: it starts as the first orderable variant
+  // and is never silently replaced if it later becomes unavailable (#77).
   const [selectedVariantId, setSelectedVariantId] = useState<string>(
-    availableVariants[0]?.id ?? ""
+    () => getOrderableVariants(product.product_variants)[0]?.id ?? ""
   );
+  // One shared rule for "which variant, what price, can it be ordered" (#77)
+  const selection = resolveSimpleProductSelection({
+    product,
+    selectedVariantId,
+    startingPricePaise: product.startingPricePaise,
+  });
+  const availableVariants = selection.orderableVariants;
+  const activeVariant = selection.activeVariant;
+  const currentPricePaise = selection.pricePaise;
+  const canOrder = selection.canOrder;
+  const variantsUnavailable = selection.purchaseState === "VARIANTS_UNAVAILABLE";
+  const selectionInvalid = selection.selectionInvalid;
+  const invalidSelectionMessage = selectionInvalid
+    ? describeInvalidSelection(
+        product.product_variants?.find((v) => v.id === selectedVariantId)?.label
+      )
+    : null;
+
+  // Accessible names for the disabled controls say WHY the product cannot be ordered
+  const orderBlockedLabel =
+    !product.is_available || variantsUnavailable
+      ? `${product.name} is currently unavailable`
+      : !product.orderable_online
+      ? `${product.name} is available in-store only`
+      : selectionInvalid
+      ? `Choose an option for ${product.name} first`
+      : `${product.name} cannot be ordered online right now`;
+  const detailsLabel =
+    !product.is_available || variantsUnavailable
+      ? `View details for ${product.name} (currently unavailable)`
+      : !product.orderable_online
+      ? `View details for ${product.name} (in-store only)`
+      : `View details for ${product.name}`;
+
   const [quantity, setQuantity] = useState<number>(0);
   const [justAdded, setJustAdded] = useState(false);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
+  // Set when the live menu says the item can no longer be ordered (menu was open for a while)
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  const [isCheckingAdd, setIsCheckingAdd] = useState(false);
 
   useEffect(() => {
     if (!justAdded) return;
@@ -164,38 +207,37 @@ function SimpleProductCard({ product }: { product: Product }) {
     return () => clearTimeout(timer);
   }, [warningMessage]);
 
-  // Keep selected variant synchronized if variants change
-  const activeVariant =
-    availableVariants.find((v) => v.id === selectedVariantId) ??
-    availableVariants[0];
-
-  const hasDefinedVariants = availableVariants.length > 0;
-  const currentPricePaise = activeVariant
-    ? activeVariant.price_paise
-    : typeof product.startingPricePaise === "number" &&
-      product.startingPricePaise > 0
-    ? product.startingPricePaise
-    : null;
-
-  const isOrderable = product.is_available && product.orderable_online;
-  const canOrder =
-    isOrderable &&
-    currentPricePaise !== null &&
-    (!hasDefinedVariants || activeVariant !== undefined);
-
   // Add to Cart is enabled ONLY when the customer has explicitly selected a quantity > 0
-  const canAddToCart = canOrder && quantity > 0;
+  const canAddToCart = canOrder && quantity > 0 && !isCheckingAdd;
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     // Defensive guard: if somehow triggered while quantity is 0, show message and do not add to cart
     if (quantity <= 0) {
       setWarningMessage("Add a quantity first");
       return;
     }
 
-    if (!canOrder || currentPricePaise === null) {
+    if (!canOrder || currentPricePaise === null || isCheckingAdd) {
       return;
     }
+
+    // The menu may have been open for a while: confirm with the server that this item and
+    // variant can still be ordered before it goes into the cart.
+    setIsCheckingAdd(true);
+    const blocked = await checkItemBeforeAdd({
+      productId: product.id,
+      variantId: activeVariant?.id,
+      quantity,
+      productName: product.name,
+    });
+    setIsCheckingAdd(false);
+    if (blocked) {
+      setBlockedMessage(blocked);
+      setQuantity(0);
+      router.refresh(); // reload the menu so the card shows the current availability
+      return;
+    }
+    setBlockedMessage(null);
 
     const itemKey = generateCartItemKey({
       productId: product.id,
@@ -230,7 +272,7 @@ function SimpleProductCard({ product }: { product: Product }) {
         <Link
           href={`/menu/${categorySlug}/${product.slug}`}
           className="relative flex aspect-16/9 sm:aspect-4/3 w-full items-center justify-center overflow-hidden border-b border-border bg-secondary/50 text-caramel/70 transition-colors duration-300 group-hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
-          aria-label={`View details for ${product.name}`}
+          aria-label={detailsLabel}
         >
           {imageUrl ? (
             <Image
@@ -268,6 +310,11 @@ function SimpleProductCard({ product }: { product: Product }) {
                 In-Store Only
               </span>
             )}
+            {variantsUnavailable && (
+              <span className="rounded-xs border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground uppercase">
+                Unavailable
+              </span>
+            )}
           </div>
         </Link>
 
@@ -284,20 +331,29 @@ function SimpleProductCard({ product }: { product: Product }) {
           {/* Price & Variant Selector row */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
             {/* Top-left: Displayed price */}
-            <span className="font-heading text-sm sm:text-base font-bold text-foreground">
-              {currentPricePaise !== null
-                ? formatPaise(currentPricePaise)
-                : "Ask in store"}
-            </span>
+            {variantsUnavailable ? (
+              <span className="font-heading text-sm sm:text-base font-semibold text-muted-foreground">
+                Currently unavailable
+              </span>
+            ) : (
+              <span className="font-heading text-sm sm:text-base font-bold text-foreground">
+                {currentPricePaise !== null
+                  ? formatPaise(currentPricePaise)
+                  : selectionInvalid
+                  ? "Choose an option"
+                  : "Ask in store"}
+              </span>
+            )}
 
             {/* Top-right: Variant selector */}
-            {availableVariants.length === 1 && (
+            {availableVariants.length === 1 && !selectionInvalid && (
               <span className="text-[11px] sm:text-xs font-medium text-muted-foreground">
                 {availableVariants[0].label}
               </span>
             )}
 
-            {availableVariants.length >= 2 && availableVariants.length <= 3 && (
+            {((availableVariants.length >= 2 && availableVariants.length <= 3) ||
+              (selectionInvalid && availableVariants.length === 1)) && (
               <div
                 className="flex items-center gap-1"
                 role="group"
@@ -312,8 +368,10 @@ function SimpleProductCard({ product }: { product: Product }) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        setBlockedMessage(null);
                         setSelectedVariantId(variant.id);
                       }}
+                      aria-pressed={isSelected}
                       className={cn(
                         "rounded-xs px-2 py-0.5 text-[11px] sm:text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel",
                         isSelected
@@ -334,11 +392,17 @@ function SimpleProductCard({ product }: { product: Product }) {
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => {
                   e.stopPropagation();
+                  setBlockedMessage(null);
                   setSelectedVariantId(e.target.value);
                 }}
                 aria-label="Select variant"
                 className="h-7 rounded-xs border border-border bg-card px-2 text-[11px] sm:text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
               >
+                {!activeVariant && (
+                  <option value="" disabled>
+                    Select an option
+                  </option>
+                )}
                 {availableVariants.map((variant) => (
                   <option key={variant.id} value={variant.id}>
                     {variant.label}
@@ -349,6 +413,24 @@ function SimpleProductCard({ product }: { product: Product }) {
           </div>
         </div>
       </div>
+
+      {invalidSelectionMessage && (
+        <p
+          role="alert"
+          className="px-3.5 pb-2 text-[11px] leading-snug font-medium text-destructive sm:px-4"
+        >
+          {invalidSelectionMessage}
+        </p>
+      )}
+
+      {blockedMessage && !selectionInvalid && (
+        <p
+          role="alert"
+          className="px-3.5 pb-2 text-[11px] leading-snug font-medium text-destructive sm:px-4"
+        >
+          {blockedMessage}
+        </p>
+      )}
 
       {/* Action Row: Quantity / Add on Left, Add to Cart on Right */}
       <div className="relative px-3.5 pb-3.5 sm:px-4 sm:pb-4 pt-2.5 border-t border-border/60 flex items-center justify-between gap-2">
@@ -364,7 +446,7 @@ function SimpleProductCard({ product }: { product: Product }) {
         )}
 
         {/* Bottom-left: Initial [ Add ] -> Transforms into [ − ] 1 [ + ] */}
-        {quantity === 0 ? (
+        {quantity === 0 || !canOrder ? (
           <button
             type="button"
             disabled={!canOrder}
@@ -379,7 +461,7 @@ function SimpleProductCard({ product }: { product: Product }) {
               !canOrder &&
                 "opacity-50 cursor-not-allowed border-border text-muted-foreground hover:bg-transparent"
             )}
-            aria-label={`Select quantity for ${product.name}`}
+            aria-label={canOrder ? `Select quantity for ${product.name}` : orderBlockedLabel}
           >
             Add
           </button>
@@ -441,10 +523,10 @@ function SimpleProductCard({ product }: { product: Product }) {
               handleAddToCart();
             }}
             aria-label={
-              !product.is_available
-                ? `${product.name} is currently unavailable`
-                : !product.orderable_online
-                ? `${product.name} is available in-store only`
+              !canOrder
+                ? orderBlockedLabel
+                : isCheckingAdd
+                ? `Checking that ${product.name} is still available`
                 : canAddToCart
                 ? `Add ${quantity} of ${product.name} to cart`
                 : `Select a quantity for ${product.name} first`
@@ -467,10 +549,12 @@ function SimpleProductCard({ product }: { product: Product }) {
               <>
                 <ShoppingBag className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>
-                  {!product.is_available
+                  {!product.is_available || variantsUnavailable
                     ? "Unavailable"
                     : !product.orderable_online
                     ? "In-Store"
+                    : selectionInvalid
+                    ? "Choose option"
                     : "Add to Cart"}
                 </span>
               </>
