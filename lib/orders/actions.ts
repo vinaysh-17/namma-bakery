@@ -6,8 +6,10 @@ import { createClient as createServerClient } from "@/lib/supabase/server";
 import {
   placeOrderInputSchema,
   lookupOrderTokenSchema,
+  validateCartInputSchema,
 } from "./validation";
-import type { PlaceOrderResult } from "./types";
+import type { PlaceOrderResult, ValidateCartResult, CartItemStatus } from "./types";
+import { mapCartRpcError } from "./cart-errors";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 
 const DEFAULT_LOCATION_SLUG = "namma-bakery-rr-nagar";
@@ -18,6 +20,9 @@ const ORDER_IP_WINDOW_MS = 10 * 60 * 1000; // 6 orders per 10 minutes per IP
 
 const ORDER_PHONE_MAX_REQUESTS = 3;
 const ORDER_PHONE_WINDOW_MS = 10 * 60 * 1000; // 3 orders per 10 minutes per phone
+
+const CART_CHECK_IP_MAX_REQUESTS = 30;
+const CART_CHECK_IP_WINDOW_MS = 5 * 60 * 1000; // 30 cart checks per 5 minutes per IP
 
 const LOOKUP_IP_MAX_REQUESTS = 10;
 const LOOKUP_IP_WINDOW_MS = 5 * 60 * 1000; // 10 lookups per 5 minutes per IP
@@ -138,12 +143,15 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
           egg_type: it.cakeConfig.eggType,
           finish: it.cakeConfig.finish || "STANDARD",
           cake_message: it.cakeMessage ? it.cakeMessage.trim() : null,
+          expected_unit_price_paise: it.expectedUnitPricePaise,
         };
       }
       return {
         product_id: it.productId,
         variant_id: it.variantId,
         quantity: it.quantity,
+        // Compared with the live price by place_order; never used to price the order
+        expected_unit_price_paise: it.expectedUnitPricePaise,
       };
     });
 
@@ -217,21 +225,11 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
           code: "LEAD_TIME_NOT_MET",
         };
       }
-      if (msg.includes("PRODUCT_UNAVAILABLE")) {
-        return {
-          success: false,
-          error:
-            "One or more items in your cart is currently unavailable or out of stock. Please review your cart.",
-          code: "PRODUCT_UNAVAILABLE",
-        };
-      }
-      if (msg.includes("OPTION_NOT_AVAILABLE")) {
-        return {
-          success: false,
-          error:
-            "One of the selected size or finish options is no longer available. Please update your cart.",
-          code: "OPTION_NOT_AVAILABLE",
-        };
+      // Price changed / product removed / option unavailable: name the item and make clear that
+      // NO order was created (the database rolled the whole attempt back).
+      const cartError = mapCartRpcError(msg);
+      if (cartError) {
+        return { success: false, error: cartError.error, code: cartError.code };
       }
       if (msg.includes("INVALID_QUANTITY")) {
         return {
@@ -310,6 +308,78 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
       error:
         "An unexpected error occurred while placing your order. Please try again.",
     };
+  }
+}
+
+/**
+ * Server Action: Checks the customer's cart against the LIVE menu without placing an order.
+ *
+ * Read-only. Returns, per cart item, whether it can still be ordered and its current
+ * authoritative price (from the database function check_cart_items), so checkout can show
+ * what changed before the customer submits. It is advisory: placeOrderAction / place_order
+ * re-validate everything atomically when the order is actually placed.
+ */
+export async function validateCartAction(input: unknown): Promise<ValidateCartResult> {
+  const clientIp = await getClientIp();
+  const limit = checkRateLimit({
+    key: `cartcheck:ip:${clientIp}`,
+    maxRequests: CART_CHECK_IP_MAX_REQUESTS,
+    windowMs: CART_CHECK_IP_WINDOW_MS,
+  });
+  if (!limit.allowed) {
+    return { success: false, error: "Too many cart checks. Please wait a moment." };
+  }
+
+  const parsed = validateCartInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "Your cart could not be checked." };
+  }
+
+  try {
+    const supabase = createAdminClient();
+    const p_items = parsed.data.items.map((it) =>
+      it.kind === "TIERED_CAKE" && it.cakeConfig
+        ? {
+            product_id: it.productId,
+            weight_grams: it.cakeConfig.weightGrams,
+            egg_type: it.cakeConfig.eggType,
+            finish: it.cakeConfig.finish || "STANDARD",
+          }
+        : { product_id: it.productId, variant_id: it.variantId }
+    );
+
+    const { data, error } = await supabase.rpc("check_cart_items", { p_items });
+    if (error || !Array.isArray(data)) {
+      console.error("[validateCartAction] Cart check failed:", {
+        code: error?.code,
+        message: (error?.message || "").slice(0, 100),
+      });
+      return { success: false, error: "Your cart could not be checked right now." };
+    }
+
+    const known: CartItemStatus[] = [
+      "OK",
+      "PRODUCT_NOT_FOUND",
+      "PRODUCT_UNAVAILABLE",
+      "OPTION_NOT_AVAILABLE",
+    ];
+    return {
+      success: true,
+      items: data.map((row) => ({
+        index: Number(row.item_index),
+        status: known.includes(row.item_status) ? row.item_status : "PRODUCT_UNAVAILABLE",
+        productName: typeof row.item_name === "string" ? row.item_name : null,
+        currentUnitPricePaise:
+          typeof row.current_unit_price_paise === "number"
+            ? row.current_unit_price_paise
+            : null,
+      })),
+    };
+  } catch (err) {
+    console.error("[validateCartAction] Unexpected error:", {
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+    return { success: false, error: "Your cart could not be checked right now." };
   }
 }
 

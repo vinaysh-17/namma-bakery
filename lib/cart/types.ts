@@ -49,6 +49,8 @@ export type CartAction =
   | { type: "UPDATE_QUANTITY"; payload: { itemKey: string; quantity: number } }
   | { type: "INCREMENT_QUANTITY"; payload: { itemKey: string } }
   | { type: "DECREMENT_QUANTITY"; payload: { itemKey: string } }
+  | { type: "APPLY_LIVE_PRICES"; payload: { updates: { itemKey: string; unitPricePaise: number }[] } }
+  | { type: "REMOVE_ITEMS"; payload: { itemKeys: string[] } }
   | { type: "CLEAR_CART" }
   | {
       type: "INIT_CART";
@@ -75,6 +77,10 @@ export interface CartContextValue {
   updateQuantity: (itemKey: string, quantity: number) => void;
   incrementQuantity: (itemKey: string) => void;
   decrementQuantity: (itemKey: string) => void;
+  /** Replace saved unit prices with the current menu prices (after the customer reviewed them) */
+  applyLivePrices: (updates: { itemKey: string; unitPricePaise: number }[]) => void;
+  /** Remove several cart lines at once (e.g. items that are no longer available) */
+  removeItems: (itemKeys: string[]) => void;
   clearCart: () => void;
   setPickupDate: (date: string | null) => void;
   setPickupSlot: (slot: PickupSlot | null) => void;

@@ -60,6 +60,25 @@ function cartReducer(state: CartState, action: CartAction): CartState {
         items: state.items.filter((item) => item.itemKey !== action.payload.itemKey),
       };
     }
+    case "APPLY_LIVE_PRICES": {
+      const byKey = new Map(
+        action.payload.updates.map((u) => [u.itemKey, u.unitPricePaise])
+      );
+      return {
+        ...state,
+        items: state.items.map((item) => {
+          const next = byKey.get(item.itemKey);
+          return next === undefined ? item : { ...item, unitPricePaise: next };
+        }),
+      };
+    }
+    case "REMOVE_ITEMS": {
+      const drop = new Set(action.payload.itemKeys);
+      return {
+        ...state,
+        items: state.items.filter((item) => !drop.has(item.itemKey)),
+      };
+    }
     case "UPDATE_QUANTITY": {
       const targetQty = action.payload.quantity;
       if (targetQty <= 0) {
@@ -276,6 +295,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "DECREMENT_QUANTITY", payload: { itemKey } });
   }, []);
 
+  const applyLivePrices = React.useCallback(
+    (updates: { itemKey: string; unitPricePaise: number }[]) => {
+      dispatch({ type: "APPLY_LIVE_PRICES", payload: { updates } });
+    },
+    []
+  );
+
+  const removeItems = React.useCallback((itemKeys: string[]) => {
+    dispatch({ type: "REMOVE_ITEMS", payload: { itemKeys } });
+  }, []);
+
   const clearCart = React.useCallback(() => {
     dispatch({ type: "CLEAR_CART" });
   }, []);
@@ -319,6 +349,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       updateQuantity,
       incrementQuantity,
       decrementQuantity,
+      applyLivePrices,
+      removeItems,
       clearCart,
       setPickupDate,
       setPickupSlot,
@@ -337,6 +369,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       updateQuantity,
       incrementQuantity,
       decrementQuantity,
+      applyLivePrices,
+      removeItems,
       clearCart,
       setPickupDate,
       setPickupSlot,

@@ -50,6 +50,11 @@ import { getCustomCakeStaffStatus } from "../lib/staff/custom-cake-workflow";
 import type { CustomCakeLinkedOrder, CustomCakeRequest } from "../lib/custom-cake/types";
 import type { OrderStatus } from "../lib/orders/types";
 import { formatIstDate, getIstDateString } from "../lib/utils/date";
+import { mapCartRpcError, extractProductName } from "../lib/orders/cart-errors";
+import { deriveCartIssues } from "../lib/cart/cart-issues";
+import type { CartItem } from "../lib/cart/types";
+import type { CartItemCheck } from "../lib/orders/types";
+import { validateCartInputSchema } from "../lib/orders/validation";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -1362,6 +1367,187 @@ assert(
   /setFileError\("Reference photo must be under 5MB in size\."\)/.test(customCakeFormSrc) &&
     /setFileError\("Only PNG, JPEG, and WebP image formats are accepted\."\)/.test(customCakeFormSrc),
   "Form Errors: photo problems are shown under the photo upload"
+);
+
+// --- Cart validated against the live menu (GitHub issue #75) ---
+console.log("\n--- Cart Validated Against The Live Menu (#75) ---");
+
+const SIMPLE_ID = "11111111-1111-4111-8111-111111111111";
+const VARIANT_ID = "22222222-2222-4222-8222-222222222222";
+const simpleOrderItem = { productId: SIMPLE_ID, kind: "SIMPLE" as const, variantId: VARIANT_ID, quantity: 1 };
+
+// Input: the price the customer saw may be sent for COMPARISON; forged price/total fields stay rejected
+const withExpected = placeOrderInputSchema.safeParse({
+  ...validBaseOrder,
+  items: [{ ...simpleOrderItem, expectedUnitPricePaise: 27000 }],
+});
+assert(withExpected.success, "Live menu: an item may carry the price the customer saw (for comparison)");
+assert(
+  !placeOrderInputSchema.safeParse({ ...validBaseOrder, items: [{ ...simpleOrderItem, expectedUnitPricePaise: -1 }] }).success,
+  "Live menu: a negative expected price is rejected"
+);
+assert(
+  !placeOrderInputSchema.safeParse({ ...validBaseOrder, items: [{ ...simpleOrderItem, expectedUnitPricePaise: 270.5 }] }).success,
+  "Live menu: a fractional expected price is rejected"
+);
+assert(
+  !placeOrderInputSchema.safeParse({ ...validBaseOrder, items: [{ ...simpleOrderItem, unitPricePaise: 1 }] }).success &&
+    !placeOrderInputSchema.safeParse({ ...validBaseOrder, items: [{ ...simpleOrderItem, price: 1 }] }).success &&
+    !placeOrderInputSchema.safeParse({ ...validBaseOrder, totalPaise: 1 }).success,
+  "Live menu: forged price / total fields are still rejected"
+);
+assert(
+  validateCartInputSchema.safeParse({ items: [simpleOrderItem] }).success &&
+    !validateCartInputSchema.safeParse({ items: [] }).success &&
+    !validateCartInputSchema.safeParse({ items: [simpleOrderItem], total: 1 }).success &&
+    !validateCartInputSchema.safeParse({ items: Array.from({ length: 21 }, () => simpleOrderItem) }).success,
+  "Live menu: the cart check input is strict (1-20 items, no extra fields)"
+);
+
+// Error mapping: specific, safe and clear that no order was created
+const priceMsg = mapCartRpcError("PRICE_CHANGED: Black Forest");
+assert(
+  priceMsg?.code === "PRICE_CHANGED" && /"Black Forest"/.test(priceMsg.error) && /price/.test(priceMsg.error) && /not placed/.test(priceMsg.error),
+  "Live menu: a price change is reported by item name and says the order was not placed"
+);
+const goneMsg = mapCartRpcError("PRODUCT_NOT_FOUND: Veg Puff");
+assert(
+  goneMsg?.code === "PRODUCT_NOT_FOUND" && /"Veg Puff" is no longer available/.test(goneMsg.error) && /not placed/.test(goneMsg.error),
+  "Live menu: a removed product is named instead of a generic failure"
+);
+const noNameMsg = mapCartRpcError("PRODUCT_NOT_FOUND: ");
+assert(
+  noNameMsg?.code === "PRODUCT_NOT_FOUND" && /An item in your cart is no longer available/.test(noNameMsg.error),
+  "Live menu: a removed product with no known name still gets a readable message"
+);
+const optionMsg = mapCartRpcError("OPTION_NOT_AVAILABLE: Vanilla");
+assert(
+  optionMsg?.code === "OPTION_NOT_AVAILABLE" && /"Vanilla"/.test(optionMsg.error),
+  "Live menu: an unavailable variant / cake option is named"
+);
+assert(mapCartRpcError("PRODUCT_UNAVAILABLE: Mango Cake")?.code === "PRODUCT_UNAVAILABLE", "Live menu: an unavailable product is mapped");
+assert(mapCartRpcError("SLOT_FULL") === null && mapCartRpcError("duplicate key value violates unique constraint") === null, "Live menu: unrelated errors are left to the other handlers");
+const hostile = mapCartRpcError('PRICE_CHANGED: Cake"; drop table orders;--\nDETAIL: Key (id)=(x) already exists');
+assert(
+  hostile !== null &&
+    !/DETAIL|Key \(id\)|already exists/.test(hostile.error) &&
+    !/[;\r\n]/.test(hostile.error.replace(/"[^"]*"/, "")) &&
+    hostile.error.length < 300,
+  "Live menu: only the item name is taken from the database message (no second line or raw detail)"
+);
+assert(extractProductName("PRICE_CHANGED: " + "A".repeat(500), "PRICE_CHANGED").length <= 80, "Live menu: product names in messages are length-limited");
+assert(extractProductName("PRICE_CHANGED: ಚಾಕೊಲೇಟ್ ಕೇಕ್ 1kg", "PRICE_CHANGED").includes("ಚಾಕೊಲೇಟ್"), "Live menu: Kannada product names are preserved");
+
+// Comparing the cart with the live menu: the database price is the only price that counts
+const cartLine = (over: Partial<CartItem>): CartItem => ({
+  itemKey: "simple:a:v",
+  productId: SIMPLE_ID,
+  productSlug: "a",
+  productName: "Veg Puff",
+  categorySlug: "snacks",
+  kind: "SIMPLE",
+  variantId: VARIANT_ID,
+  unitPricePaise: 5000,
+  quantity: 2,
+  ...over,
+});
+const liveCheck = (over: Partial<CartItemCheck>): CartItemCheck => ({
+  index: 0,
+  status: "OK",
+  productName: "Veg Puff",
+  currentUnitPricePaise: 5000,
+  ...over,
+});
+assert(deriveCartIssues([cartLine({})], [liveCheck({})]).length === 0, "Live menu: a current cart has no issues");
+const priceIssue = deriveCartIssues([cartLine({})], [liveCheck({ currentUnitPricePaise: 6000 })]);
+assert(
+  priceIssue.length === 1 && priceIssue[0].kind === "PRICE_CHANGED" &&
+    priceIssue[0].kind === "PRICE_CHANGED" && priceIssue[0].oldUnitPricePaise === 5000 && priceIssue[0].newUnitPricePaise === 6000,
+  "Live menu: a stale cart price is detected with the old and the live price"
+);
+assert(
+  deriveCartIssues([cartLine({})], [liveCheck({ currentUnitPricePaise: 4000 })])[0]?.kind === "PRICE_CHANGED",
+  "Live menu: a price DROP is also reported (never silently changed)"
+);
+const goneIssue = deriveCartIssues([cartLine({})], [liveCheck({ status: "PRODUCT_NOT_FOUND", currentUnitPricePaise: null })]);
+assert(goneIssue[0]?.kind === "UNAVAILABLE" && goneIssue[0].reason === "PRODUCT", "Live menu: a removed product is flagged unavailable");
+const variantIssue = deriveCartIssues([cartLine({})], [liveCheck({ status: "OPTION_NOT_AVAILABLE", currentUnitPricePaise: null })]);
+assert(variantIssue[0]?.kind === "UNAVAILABLE" && variantIssue[0].reason === "OPTION", "Live menu: an unavailable variant is flagged separately from the product");
+const mixed = deriveCartIssues(
+  [cartLine({}), cartLine({ itemKey: "simple:b:v", productName: "Brownie", unitPricePaise: 9000 }), cartLine({ itemKey: "simple:c:v", unitPricePaise: 1000 })],
+  [
+    liveCheck({ index: 0 }),
+    liveCheck({ index: 1, productName: "Brownie", currentUnitPricePaise: 9500 }),
+    liveCheck({ index: 2, status: "PRODUCT_UNAVAILABLE", currentUnitPricePaise: null }),
+  ]
+);
+assert(
+  mixed.length === 2 && mixed[0].itemKey === "simple:b:v" && mixed[1].itemKey === "simple:c:v",
+  "Live menu: only the changed lines are reported, in cart order"
+);
+assert(deriveCartIssues([cartLine({})], [liveCheck({ index: 7 })]).length === 0, "Live menu: a result for an unknown cart position is ignored");
+
+// Wiring (static): the server action sends the expected price only for comparison
+const actionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/orders/actions.ts"), "utf8");
+assert(
+  (actionsSrc.match(/expected_unit_price_paise: it\.expectedUnitPricePaise/g) || []).length === 2,
+  "Live menu: both simple and cake lines pass the expected price to place_order"
+);
+assert(!/(?<!expected_)unit_price_paise: it\./.test(actionsSrc) && !/total_paise/.test(actionsSrc), "Live menu: the server action never sends a price or total to be stored");
+assert(/mapCartRpcError\(msg\)/.test(actionsSrc) && /export async function validateCartAction/.test(actionsSrc), "Live menu: place order maps cart errors and the cart check action exists");
+assert(
+  /createAdminClient\(\)[\s\S]*?rpc\("check_cart_items"/.test(actionsSrc) && /cartcheck:ip:/.test(actionsSrc),
+  "Live menu: the cart check runs server-side, is read-only (check_cart_items) and is rate limited"
+);
+assert(
+  /expectedUnitPricePaise: item\.unitPricePaise/.test(checkoutSrc) &&
+    /disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc) &&
+    /CartChangesNotice/.test(checkoutSrc),
+  "Live menu: checkout sends the seen price, shows what changed and blocks Place Order until reviewed"
+);
+assert(
+  /attemptRef\.current = null;\s*inFlightRef\.current = false;\s*setSubmitError\(actionResult\.error\)/.test(checkoutSrc) &&
+    /CART_CHANGED_CODES\.has\(actionResult\.code\)/.test(checkoutSrc),
+  "Live menu: a stale-cart refusal is a definite refusal (new idempotency key next time) and refreshes the notice"
+);
+const summarySrc = fs.readFileSync(path.join(process.cwd(), "components/checkout/checkout-order-summary.tsx"), "utf8");
+assert(!/Exact order amount/.test(summarySrc), "Live menu: checkout no longer calls an unverified total the 'Exact order amount'");
+
+// Migration 0023 (static checks of the SQL text; behaviour is covered by supabase/tests/009)
+const migration23 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0023_cart_live_menu_validation.sql"), "utf8");
+const placeOrder23 = migration23.slice(migration23.indexOf("create or replace function public.place_order"), migration23.indexOf("-- read-only cart check"));
+assert(/raise exception 'PRICE_CHANGED: %', prod\.name/.test(placeOrder23), "Live menu SQL: a changed price raises PRICE_CHANGED with the product name");
+assert(
+  /v_unit := rule\.price_paise/.test(placeOrder23) && /v_unit := var\.price_paise/.test(placeOrder23) &&
+    !/v_unit := v_expected|v_total := v_total \+ v_expected/.test(placeOrder23),
+  "Live menu SQL: the order is always priced from the live catalog, never from the expected price"
+);
+assert(
+  placeOrder23.indexOf("idempotency_key = v_key") > 0 &&
+    placeOrder23.indexOf("idempotency_key = v_key") < placeOrder23.indexOf("PRICE_CHANGED"),
+  "Live menu SQL: an idempotent replay is answered before prices are compared (a retry never fails on a later price change)"
+);
+assert(
+  placeOrder23.indexOf("insert into orders") < placeOrder23.indexOf("PRICE_CHANGED") && /raise exception/.test(placeOrder23),
+  "Live menu SQL: the refusal happens inside the transaction after the order row, so it rolls back (no partial order, key not consumed)"
+);
+assert(!/drop function/.test(migration23) && /create or replace function public\.place_order/.test(migration23), "Live menu SQL: place_order keeps its signature (no new overload)");
+assert(
+  /revoke execute on function public\.place_order\(uuid, uuid, text, text, text, timestamptz, text, jsonb, text\)\s+from public, anon, authenticated;/.test(migration23) &&
+    /grant execute on function public\.place_order\([^)]*\)\s+to service_role;/.test(migration23),
+  "Live menu SQL: place_order stays service_role only"
+);
+const checkFn23 = migration23.slice(migration23.indexOf("create or replace function public.check_cart_items"));
+assert(
+  /language plpgsql stable security definer set search_path = public/.test(checkFn23) &&
+    !/\b(insert|update|delete)\b\s+(into|from)?\s*(public\.)?\w+/i.test(checkFn23.replace(/--.*$/gm, "").replace(/select[\s\S]*?;/gi, "")) &&
+    /grant execute on function public\.check_cart_items\(jsonb\) to service_role/.test(checkFn23) &&
+    /revoke execute on function public\.check_cart_items\(jsonb\) from public, anon, authenticated/.test(checkFn23),
+  "Live menu SQL: check_cart_items is read-only and service_role only"
+);
+assert(
+  /c\.is_visible or c\.archived_at is not null/.test(checkFn23) && /archived_at is null/.test(checkFn23) && /is_available and archived_at is null/.test(checkFn23),
+  "Live menu SQL: the cart check applies the same availability rules as place_order (including hidden categories)"
 );
 
 console.log("\n========================================================");

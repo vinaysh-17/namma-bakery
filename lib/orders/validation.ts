@@ -30,6 +30,18 @@ export const placeOrderItemSchema = z
       .max(60, "Cake message cannot exceed 60 characters")
       .transform((val) => (val?.trim() ? val.trim() : undefined))
       .optional(),
+    /**
+     * The unit price the customer saw in their cart (paise). It is NEVER used to price the
+     * order: the database prices every line from the live catalog. It is only compared with
+     * the live price, and the order is refused (PRICE_CHANGED) if they differ, so the
+     * customer is never charged an amount they were not shown.
+     */
+    expectedUnitPricePaise: z
+      .number()
+      .int("Price must be a whole number of paise")
+      .min(0)
+      .max(10_000_000)
+      .optional(),
   })
   .strict()
   .refine(
@@ -70,6 +82,16 @@ export const placeOrderInputSchema = z
       .string()
       .regex(/^[A-Za-z0-9_-]{16,100}$/, "Invalid checkout reference")
       .optional(),
+  })
+  .strict();
+
+/** Read-only cart check against the live menu (see check_cart_items). */
+export const validateCartInputSchema = z
+  .object({
+    items: z
+      .array(placeOrderItemSchema)
+      .min(1, "At least 1 item is required")
+      .max(20, "A cart cannot contain more than 20 items"),
   })
   .strict();
 

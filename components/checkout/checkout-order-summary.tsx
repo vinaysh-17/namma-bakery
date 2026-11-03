@@ -13,12 +13,19 @@ interface CheckoutOrderSummaryProps {
   items: CartItem[];
   itemCount: number;
   subtotalPaise: number;
+  /**
+   * verified   - the cart was just checked against the live menu and matches
+   * changed    - the live menu differs from the cart (a notice above asks the customer to review)
+   * unverified - the check has not completed (or could not run)
+   */
+  priceStatus?: "verified" | "changed" | "unverified";
 }
 
 export function CheckoutOrderSummary({
   items,
   itemCount,
   subtotalPaise,
+  priceStatus = "unverified",
 }: CheckoutOrderSummaryProps) {
   return (
     <div className="sticky top-24 rounded-sm border border-border bg-card p-5 sm:p-6 space-y-5">
@@ -112,7 +119,12 @@ export function CheckoutOrderSummary({
       <div className="rounded-sm border border-border/70 bg-secondary/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
         <p>✓ All prices include taxes.</p>
         <p className="mt-1">
-          Exact order amount. Payment is collected at the bakery during pickup.
+          {priceStatus === "verified"
+            ? "Prices checked against the current menu. "
+            : priceStatus === "changed"
+              ? "Some prices or items changed - please review them above. "
+              : "Prices are confirmed against the current menu when you place your order. "}
+          Payment is collected at the bakery during pickup.
         </p>
       </div>
     </div>

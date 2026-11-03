@@ -30,6 +30,8 @@ export interface PlaceOrderItemInput {
     finish: CakeFinish;
   };
   cakeMessage?: string;
+  /** Price the customer saw (paise). Compared with the live price only, never used to price. */
+  expectedUnitPricePaise?: number;
 }
 
 export interface PlaceOrderInput {
@@ -87,3 +89,23 @@ export interface OrderTrackDetails {
   items: OrderTrackItem[];
   history: OrderStatusHistoryEntry[];
 }
+
+/** Per-item result of checking a cart against the live menu. */
+export type CartItemStatus =
+  | "OK"
+  | "PRODUCT_NOT_FOUND"
+  | "PRODUCT_UNAVAILABLE"
+  | "OPTION_NOT_AVAILABLE";
+
+export interface CartItemCheck {
+  /** 0-based position of the item in the cart that was checked */
+  index: number;
+  status: CartItemStatus;
+  productName: string | null;
+  /** Authoritative current unit price; null when the item can't be ordered */
+  currentUnitPricePaise: number | null;
+}
+
+export type ValidateCartResult =
+  | { success: true; items: CartItemCheck[] }
+  | { success: false; error: string };

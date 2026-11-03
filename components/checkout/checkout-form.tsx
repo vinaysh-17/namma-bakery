@@ -22,6 +22,16 @@ import { PaymentMethodNote } from "./payment-method-note";
 import { CheckoutOrderSummary } from "./checkout-order-summary";
 import { formatPaise } from "@/lib/utils/money";
 import { createIdempotencyKey } from "@/lib/orders/idempotency";
+import { useCartValidation } from "@/lib/cart/use-cart-validation";
+import { CartChangesNotice } from "./cart-changes-notice";
+
+// Codes returned by placeOrderAction when the cart no longer matches the live menu (#75)
+const CART_CHANGED_CODES = new Set([
+  "PRICE_CHANGED",
+  "PRODUCT_NOT_FOUND",
+  "PRODUCT_UNAVAILABLE",
+  "OPTION_NOT_AVAILABLE",
+]);
 
 export function CheckoutForm() {
   const router = useRouter();
@@ -40,7 +50,14 @@ export function CheckoutForm() {
     pickupDate,
     pickupSlot,
     clearCart,
+    applyLivePrices,
+    removeItems,
   } = useCart();
+
+  // Live menu check (#75): shows what changed since the items were added to the cart
+  const cartValidation = useCartValidation(items, isHydrated && !isEmpty);
+  const cartIssues = cartValidation.issues;
+  const hasCartIssues = cartIssues.length > 0;
 
   const [formData, setFormData] = React.useState<CustomerDetailsFormInput>({
     customerName: "",
@@ -126,6 +143,9 @@ export function CheckoutForm() {
               finish: item.configuration.finish,
             }
           : undefined,
+        // The price the customer saw. The database compares it with the live price and refuses
+        // the order if it changed; it is never used to price the order (#75).
+        expectedUnitPricePaise: item.unitPricePaise,
         // Order notes are not a per-cake inscription: they can mention several cakes or
         // pickup details. Staff read them in full as "Customer Instructions" on the order.
       }));
@@ -155,6 +175,10 @@ export function CheckoutForm() {
         inFlightRef.current = false;
         setSubmitError(actionResult.error);
         setIsSubmitting(false);
+        // The cart no longer matches the menu: show exactly which items changed
+        if (actionResult.code && CART_CHANGED_CODES.has(actionResult.code)) {
+          void cartValidation.recheck();
+        }
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
@@ -259,6 +283,27 @@ export function CheckoutForm() {
         </div>
       )}
 
+      {/* Live menu changes (#75): price changes and unavailable items */}
+      <CartChangesNotice
+        issues={cartIssues}
+        onAcceptPrices={() => {
+          applyLivePrices(
+            cartIssues.flatMap((issue) =>
+              issue.kind === "PRICE_CHANGED"
+                ? [{ itemKey: issue.itemKey, unitPricePaise: issue.newUnitPricePaise }]
+                : []
+            )
+          );
+          setSubmitError(null);
+        }}
+        onRemoveUnavailable={() => {
+          removeItems(
+            cartIssues.flatMap((issue) => (issue.kind === "UNAVAILABLE" ? [issue.itemKey] : []))
+          );
+          setSubmitError(null);
+        }}
+      />
+
       {/* Missing Pickup Alert */}
       {!isPickupValid && (
         <div
@@ -323,9 +368,9 @@ export function CheckoutForm() {
 
               <button
                 type="submit"
-                disabled={!isPickupValid || isSubmitting}
+                disabled={!isPickupValid || isSubmitting || hasCartIssues}
                 className={`flex h-12 w-full items-center justify-center gap-2 rounded-sm text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
-                  isPickupValid && !isSubmitting
+                  isPickupValid && !isSubmitting && !hasCartIssues
                     ? "bg-caramel text-white shadow-sm hover:bg-caramel/90 active:scale-[0.99]"
                     : "cursor-not-allowed bg-muted text-muted-foreground"
                 }`}
@@ -341,7 +386,9 @@ export function CheckoutForm() {
                     <span>
                       {!isPickupValid
                         ? "Select Pickup Slot to Continue"
-                        : "Place Order (Pay at Bakery)"}
+                        : hasCartIssues
+                          ? "Review Cart Changes to Continue"
+                          : "Place Order (Pay at Bakery)"}
                     </span>
                   </>
                 )}
@@ -362,6 +409,13 @@ export function CheckoutForm() {
               items={items}
               itemCount={itemCount}
               subtotalPaise={subtotalPaise}
+              priceStatus={
+                hasCartIssues
+                  ? "changed"
+                  : cartValidation.state === "done"
+                    ? "verified"
+                    : "unverified"
+              }
             />
           </div>
         </div>
