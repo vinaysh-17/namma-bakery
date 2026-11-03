@@ -1037,6 +1037,48 @@ assert(
   "Staff Cancel: cancelled_by no longer stores the raw app_role (EMPLOYEE)"
 );
 
+// --- Stale admin screens cannot override or cancel finished orders (#79) ---
+console.log("\n--- 16. Stale-State Protection for Order Transitions ---");
+const migration22 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0022_transition_order_stale_state.sql"), "utf8");
+const staffActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/staff/actions.ts"), "utf8");
+const statusModalSrc = fs.readFileSync(path.join(process.cwd(), "components/staff/staff-status-modal.tsx"), "utf8");
+
+const fnBody = migration22.slice(migration22.indexOf("create or replace function public.transition_order"));
+assert(
+  fnBody.indexOf("STALE_STATE") > -1 &&
+    fnBody.indexOf("STALE_STATE") < fnBody.indexOf("from order_transitions where from_status"),
+  "Stale State: the database compares the expected status BEFORE looking up any transition or override"
+);
+assert(
+  /select \* into o from orders where id = p_order_id for update;[\s\S]*STALE_STATE/.test(fnBody),
+  "Stale State: the order row is locked before the expected status is compared"
+);
+assert(
+  /if p_expected_from is null then\s*raise exception 'EXPECTED_STATUS_REQUIRED'/.test(fnBody),
+  "Stale State: an admin override can never run without an expected status"
+);
+assert(/o\.status = 'COMPLETED' then\s*raise exception 'ORDER_FINAL'/.test(fnBody), "Stale State: a completed order cannot be overridden");
+assert(
+  /o\.payment_status = 'paid' and p_to in \('CANCELLED','REJECTED'\)[\s\S]*PAID_ORDER_CANNOT_BE_CANCELLED/.test(fnBody),
+  "Stale State: a paid order cannot be cancelled or rejected by an override"
+);
+assert(
+  /grant execute on function public\.transition_order\(uuid, order_status, text, timestamptz, order_status\)\s*to authenticated, service_role/.test(migration22) &&
+    !/to (anon|public)\b/.test(migration22.replace(/revoke[\s\S]*?;/g, "")),
+  "Stale State: transition_order stays callable only by signed-in roles (it checks is_staff() itself)"
+);
+const rpcCalls = staffActionsSrc.match(/rpc\("transition_order", \{[\s\S]*?\}\)/g) ?? [];
+assert(
+  rpcCalls.length >= 4 && rpcCalls.every((c) => /p_expected_from/.test(c)),
+  `Stale State: every transition_order call in the staff actions sends the expected status (${rpcCalls.length} calls)`
+);
+assert(/expectedFrom: OrderStatus;/.test(staffActionsSrc), "Stale State: transitionOrderAction requires the expected status");
+assert(/expectedFrom: order\.status,/.test(statusModalSrc), "Stale State: the status modal sends the status its screen shows");
+assert(
+  /STALE_STATE"\)\) \{\s*return \{ success: false, stale: true/.test(staffActionsSrc),
+  "Stale State: a database STALE_STATE is returned to the UI as a refresh-and-review message"
+);
+
 // --- Staff queue is organised by pickup day, pending is global (#61) ---
 console.log("\n--- 16. Staff Queue Pickup Date ---");
 const mkOrder = (o: Partial<StaffOrder>) => ({ id: Math.random().toString(36), status: "ACCEPTED", ...o }) as StaffOrder;

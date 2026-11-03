@@ -123,13 +123,21 @@ export async function portalSignOutToHomeAction(): Promise<void> {
   redirect("/");
 }
 
+const STALE_STATE_MESSAGE =
+  "This order was changed by someone else since your screen loaded. The list has been refreshed - please review its current status before trying again.";
+
 /**
  * Server action to transition order status using the database RPC `transition_order`.
  * Enforces staff privileges and maps database error codes to clear staff messages.
+ *
+ * `expectedFrom` is the status the caller's screen believes the order has. The database
+ * locks the order and refuses the move (STALE_STATE) if the real status differs, so an
+ * out-of-date screen can never trigger a transition - including an admin override (#79).
  */
 export async function transitionOrderAction(params: {
   orderId: string;
   toStatus: OrderStatus;
+  expectedFrom: OrderStatus;
   note?: string;
   estimatedReadyAt?: string | null;
 }): Promise<{ success: boolean; error?: string; stale?: boolean }> {
@@ -137,6 +145,9 @@ export async function transitionOrderAction(params: {
     const session = await requireStaffSession();
     if (!session.isStaff) {
       return { success: false, error: "Forbidden: Staff privileges required." };
+    }
+    if (!params.expectedFrom) {
+      return { success: false, error: "Please refresh the page and try again." };
     }
 
     const supabase = await createClient();
@@ -157,28 +168,40 @@ export async function transitionOrderAction(params: {
       return { success: true };
     }
 
+    // The screen is out of date: do not attempt anything (the database re-checks this
+    // under a row lock and is the final authority).
+    if (currentStatus && currentStatus !== params.expectedFrom) {
+      return { success: false, stale: true, error: STALE_STATE_MESSAGE };
+    }
+
     // The approved flow is ACCEPTED -> READY_FOR_PICKUP for staff; the database models it
     // as ACCEPTED -> PREPARING -> READY_FOR_PICKUP, so run the intermediate step first.
     // Its failure must be reported (not swallowed), otherwise the second step fails with a
     // misleading "invalid transition ACCEPTED -> READY_FOR_PICKUP".
+    let expectedForMainStep: OrderStatus = params.expectedFrom;
     if (params.toStatus === "READY_FOR_PICKUP" && currentStatus === "ACCEPTED") {
       const { error: prepError } = await supabase.rpc("transition_order", {
         p_order_id: params.orderId,
         p_to: "PREPARING",
         p_note: "Order confirmed and moved to preparation",
         p_estimated_ready_at: null,
+        p_expected_from: params.expectedFrom,
       });
       if (prepError) {
         console.error("[transitionOrderAction] Preparing step failed:", prepError.message);
-        const stale = prepError.message.includes("INVALID_TRANSITION");
+        const stale =
+          prepError.message.includes("INVALID_TRANSITION") ||
+          prepError.message.includes("STALE_STATE");
         return {
           success: false,
           stale,
           error: stale
-            ? "This order was just updated elsewhere. The list has been refreshed - please review its current status."
+            ? STALE_STATE_MESSAGE
             : "Failed to update order status. Please review details and try again.",
         };
       }
+      // the order is now PREPARING; the second step must start from exactly that
+      expectedForMainStep = "PREPARING";
     }
 
     let { error } = await supabase.rpc("transition_order", {
@@ -186,6 +209,7 @@ export async function transitionOrderAction(params: {
       p_to: params.toStatus,
       p_note: params.note?.trim() || null,
       p_estimated_ready_at: params.estimatedReadyAt || null,
+      p_expected_from: expectedForMainStep,
     });
 
     // If database function requires an estimated ready time, fallback to requested_pickup_at
@@ -205,6 +229,7 @@ export async function transitionOrderAction(params: {
         p_to: params.toStatus,
         p_note: params.note?.trim() || null,
         p_estimated_ready_at: orderData?.requested_pickup_at || null,
+        p_expected_from: expectedForMainStep,
       });
       error = retryRes.error;
     }
@@ -218,6 +243,23 @@ export async function transitionOrderAction(params: {
         return {
           success: false,
           error: "Could not accept order without estimated ready time.",
+        };
+      }
+      if (error.message.includes("STALE_STATE")) {
+        return { success: false, stale: true, error: STALE_STATE_MESSAGE };
+      }
+      if (error.message.includes("ORDER_FINAL")) {
+        return {
+          success: false,
+          stale: true,
+          error: "This order is completed and can no longer be changed.",
+        };
+      }
+      if (error.message.includes("PAID_ORDER_CANNOT_BE_CANCELLED")) {
+        return {
+          success: false,
+          error:
+            "A paid order cannot be cancelled or rejected here. Cancelling does not refund a payment.",
         };
       }
       if (error.message.includes("INVALID_TRANSITION")) {
@@ -260,7 +302,7 @@ export async function transitionOrderAction(params: {
 export async function completeOrderAndRecordPaymentAction(params: {
   orderId: string;
   note?: string;
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<{ success: boolean; error?: string; stale?: boolean }> {
   try {
     const session = await requireStaffSession();
     if (!session.isStaff) {
@@ -312,8 +354,13 @@ export async function completeOrderAndRecordPaymentAction(params: {
       p_to: "COMPLETED",
       p_note: params.note?.trim() || "Handover completed at bakery counter",
       p_estimated_ready_at: null,
+      // handover is only valid from READY_FOR_PICKUP; the database rejects it if the order moved
+      p_expected_from: "READY_FOR_PICKUP",
     });
 
+    if (transErr?.message.includes("STALE_STATE")) {
+      return { success: false, stale: true, error: STALE_STATE_MESSAGE };
+    }
     if (transErr) {
       console.error(
         "[completeOrderAndRecordPaymentAction] Handover transition error:",

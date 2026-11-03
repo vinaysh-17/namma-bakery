@@ -120,6 +120,7 @@ function StaffStatusModalContent({
         });
 
         if (!res.success) {
+          if (res.stale) onStale?.();
           setErrorMessage(res.error || "Failed to complete handover.");
           setIsSubmitting(false);
           return;
@@ -185,6 +186,8 @@ function StaffStatusModalContent({
       const res = await transitionOrderAction({
         orderId: order.id,
         toStatus: targetStatus,
+        // the status this screen is showing; the database refuses the move if it changed
+        expectedFrom: order.status,
         note,
         estimatedReadyAt: readyTime,
       });
