@@ -24,6 +24,17 @@ import { formatPaise } from "@/lib/utils/money";
 import { createIdempotencyKey } from "@/lib/orders/idempotency";
 import { useCartValidation } from "@/lib/cart/use-cart-validation";
 import { CartChangesNotice } from "./cart-changes-notice";
+import { validatePickupSlotAction } from "@/lib/pickup/actions";
+import { describeInvalidSlot } from "@/lib/pickup/slot-validity";
+import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
+
+// Codes returned by placeOrderAction when the chosen pickup time cannot be used (#76)
+const PICKUP_TIME_CODES = new Set([
+  "LEAD_TIME_NOT_MET",
+  "SLOT_FULL",
+  "OUTSIDE_OPENING_HOURS",
+  "CLOSED_DAY",
+]);
 
 // Codes returned by placeOrderAction when the cart no longer matches the live menu (#75)
 const CART_CHANGED_CODES = new Set([
@@ -52,6 +63,8 @@ export function CheckoutForm() {
     clearCart,
     applyLivePrices,
     removeItems,
+    pickupSlotNotice,
+    invalidatePickupSlot,
   } = useCart();
 
   // Live menu check (#75): shows what changed since the items were added to the cart
@@ -157,7 +170,47 @@ export function CheckoutForm() {
         pickup: pickupSlot.slotStart,
         items: itemsPayload,
       });
+      // A retry of an attempt whose outcome is unknown must go straight to the server: that
+      // order may already exist (it may even be what filled the slot), and the database
+      // answers a replay with the original order before it looks at the slot (#98).
+      const isRetryOfUnconfirmedAttempt = attemptRef.current?.fingerprint === fingerprint;
       if (!attemptRef.current || attemptRef.current.fingerprint !== fingerprint) {
+        attemptRef.current = { key: createIdempotencyKey(), fingerprint };
+      }
+
+      // Order of checks: live cart/menu (#75, the button is disabled while it has issues),
+      // then the chosen pickup time against the cart's CURRENT lead time (#76), then the order.
+      // The pickup check is read-only; if it cannot run, place_order still decides.
+      if (!isRetryOfUnconfirmedAttempt) {
+        try {
+          const slotCheck = await validatePickupSlotAction({
+            productIds: Array.from(new Set(items.map((item) => item.productId))),
+            slotStart: pickupSlot.slotStart,
+          });
+          if (slotCheck.success && !slotCheck.valid) {
+            // Nothing was sent to place_order: no order, and the key is not used
+            attemptRef.current = null;
+            inFlightRef.current = false;
+            invalidatePickupSlot(
+              describeInvalidSlot(
+                slotCheck.reason,
+                pickupDate
+                  ? formatPickupSelectionSummary(pickupDate, pickupSlot.formattedTime)
+                  : pickupSlot.formattedTime,
+                slotCheck.requiredLeadMinutes
+              )
+            );
+            setIsSubmitting(false);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+          }
+        } catch {
+          // Could not check (network): continue, the database validates the pickup time
+        }
+      }
+      if (!attemptRef.current) {
+        // Not reachable: the pre-check only clears the attempt when it returns. Kept so the
+        // key used below is always the one for this exact order content.
         attemptRef.current = { key: createIdempotencyKey(), fingerprint };
       }
 
@@ -178,6 +231,11 @@ export function CheckoutForm() {
         // The cart no longer matches the menu: show exactly which items changed
         if (actionResult.code && CART_CHANGED_CODES.has(actionResult.code)) {
           void cartValidation.recheck();
+        }
+        // The database refused the pickup time: clear it so the customer chooses another one
+        if (actionResult.code && PICKUP_TIME_CODES.has(actionResult.code)) {
+          invalidatePickupSlot(actionResult.error);
+          setSubmitError(null);
         }
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
@@ -313,10 +371,11 @@ export function CheckoutForm() {
           <AlertCircle className="h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400 mt-0.5" aria-hidden="true" />
           <div className="space-y-2">
             <p className="font-semibold text-sm">
-              Pickup slot selection is required
+              {pickupSlotNotice ? "Please choose a new pickup time" : "Pickup slot selection is required"}
             </p>
             <p className="leading-relaxed">
-              You must select an available pickup date and time slot before your order can be placed.
+              {pickupSlotNotice ??
+                "You must select an available pickup date and time slot before your order can be placed."}
             </p>
             <Link
               href="/cart"

@@ -10,6 +10,9 @@ import type {
 import type { PickupSlot } from "@/lib/pickup/types";
 import { getIstDateString } from "@/lib/utils/date";
 import { calendarDateSchema } from "@/lib/validation/common";
+import { validatePickupSlotAction } from "@/lib/pickup/actions";
+import { describeInvalidSlot, getLeadSignature } from "@/lib/pickup/slot-validity";
+import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
 
 const STORAGE_KEY = "namma-bakery-cart-v1";
 
@@ -17,6 +20,7 @@ const initialState: CartState = {
   items: [],
   pickupDate: null,
   pickupSlot: null,
+  pickupSlotNotice: null,
 };
 
 function cartReducer(state: CartState, action: CartAction): CartState {
@@ -27,6 +31,7 @@ function cartReducer(state: CartState, action: CartAction): CartState {
         items: action.payload.items,
         pickupDate: action.payload.pickupDate ?? null,
         pickupSlot: action.payload.pickupSlot ?? null,
+        pickupSlotNotice: null,
       };
     }
     case "ADD_ITEM": {
@@ -124,12 +129,23 @@ function cartReducer(state: CartState, action: CartAction): CartState {
         ...state,
         pickupDate: newDate,
         pickupSlot: nextSlot,
+        pickupSlotNotice: null,
       };
     }
     case "SET_PICKUP_SLOT": {
       return {
         ...state,
         pickupSlot: action.payload,
+        // choosing a new slot answers the notice
+        pickupSlotNotice: action.payload ? null : state.pickupSlotNotice,
+      };
+    }
+    case "INVALIDATE_PICKUP_SLOT": {
+      // Keep the chosen date; drop only the slot. The customer picks a new one themselves.
+      return {
+        ...state,
+        pickupSlot: null,
+        pickupSlotNotice: action.payload.message,
       };
     }
     case "CLEAR_PICKUP": {
@@ -137,6 +153,7 @@ function cartReducer(state: CartState, action: CartAction): CartState {
         ...state,
         pickupDate: null,
         pickupSlot: null,
+        pickupSlotNotice: null,
       };
     }
     case "CLEAR_CART": {
@@ -145,6 +162,7 @@ function cartReducer(state: CartState, action: CartAction): CartState {
         items: [],
         pickupDate: null,
         pickupSlot: null,
+        pickupSlotNotice: null,
       };
     }
     default:
@@ -269,6 +287,52 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.items, state.pickupDate, state.pickupSlot, isHydrated]);
 
+  // Slot guard (issue #76): whenever the products in the cart change, or a slot is restored
+  // from storage / chosen, ask the server whether the slot is still valid for this cart. An
+  // invalid slot is cleared with an explanation; the customer chooses again. Quantity and
+  // variant changes do not change the lead time, so they do not trigger a check.
+  const leadSignature = React.useMemo(() => getLeadSignature(state.items), [state.items]);
+  const selectedSlotStart = state.pickupSlot?.slotStart ?? null;
+  const slotCheckId = React.useRef(0);
+  const latestPickup = React.useRef({
+    pickupDate: state.pickupDate,
+    slot: state.pickupSlot,
+  });
+  React.useEffect(() => {
+    latestPickup.current = { pickupDate: state.pickupDate, slot: state.pickupSlot };
+  }, [state.pickupDate, state.pickupSlot]);
+
+  React.useEffect(() => {
+    if (!isHydrated || !selectedSlotStart || !leadSignature) return;
+    const id = ++slotCheckId.current;
+    void validatePickupSlotAction({
+      productIds: leadSignature.split("|"),
+      slotStart: selectedSlotStart,
+    })
+      .then((result) => {
+        if (id !== slotCheckId.current) return; // a newer check superseded this one
+        if (!result.success || result.valid) return; // valid, or could not check: the server still decides at checkout
+        const current = latestPickup.current;
+        if (current.slot?.slotStart !== selectedSlotStart) return; // customer already changed it
+        const summary = current.pickupDate
+          ? formatPickupSelectionSummary(current.pickupDate, current.slot.formattedTime)
+          : current.slot.formattedTime;
+        dispatch({
+          type: "INVALIDATE_PICKUP_SLOT",
+          payload: {
+            message: describeInvalidSlot(result.reason, summary, result.requiredLeadMinutes),
+          },
+        });
+      })
+      .catch(() => {
+        // Network failure: leave the slot; place_order remains the authority
+      });
+  }, [isHydrated, leadSignature, selectedSlotStart]);
+
+  const invalidatePickupSlot = React.useCallback((message: string) => {
+    dispatch({ type: "INVALIDATE_PICKUP_SLOT", payload: { message } });
+  }, []);
+
   const addItem = React.useCallback(
     (item: Omit<CartItem, "quantity"> & { quantity?: number }) => {
       dispatch({ type: "ADD_ITEM", payload: item });
@@ -344,6 +408,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       isHydrated,
       pickupDate: state.pickupDate,
       pickupSlot: state.pickupSlot,
+      pickupSlotNotice: state.pickupSlotNotice,
+      invalidatePickupSlot,
       addItem,
       removeItem,
       updateQuantity,
@@ -360,6 +426,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       state.items,
       state.pickupDate,
       state.pickupSlot,
+      state.pickupSlotNotice,
+      invalidatePickupSlot,
       itemCount,
       subtotalPaise,
       isEmpty,

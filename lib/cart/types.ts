@@ -41,6 +41,11 @@ export interface CartState {
   items: CartItem[];
   pickupDate: string | null;
   pickupSlot: PickupSlot | null;
+  /**
+   * Why the chosen pickup slot was cleared (issue #76), e.g. the cart now needs more
+   * preparation time. In memory only (not saved); cleared when a new slot or date is chosen.
+   */
+  pickupSlotNotice: string | null;
 }
 
 export type CartAction =
@@ -62,7 +67,8 @@ export type CartAction =
     }
   | { type: "SET_PICKUP_DATE"; payload: string | null }
   | { type: "SET_PICKUP_SLOT"; payload: PickupSlot | null }
-  | { type: "CLEAR_PICKUP" };
+  | { type: "CLEAR_PICKUP" }
+  | { type: "INVALIDATE_PICKUP_SLOT"; payload: { message: string } };
 
 export interface CartContextValue {
   items: CartItem[];
@@ -72,6 +78,13 @@ export interface CartContextValue {
   isHydrated: boolean;
   pickupDate: string | null;
   pickupSlot: PickupSlot | null;
+  /** Explains why the pickup slot was cleared; null when there is nothing to tell the customer */
+  pickupSlotNotice: string | null;
+  /**
+   * Clears the chosen slot (keeping the chosen date) and tells the customer why. The customer
+   * must choose a new slot; nothing is picked for them.
+   */
+  invalidatePickupSlot: (message: string) => void;
   addItem: (item: Omit<CartItem, "quantity"> & { quantity?: number }) => void;
   removeItem: (itemKey: string) => void;
   updateQuantity: (itemKey: string, quantity: number) => void;

@@ -55,6 +55,13 @@ import { deriveCartIssues } from "../lib/cart/cart-issues";
 import type { CartItem } from "../lib/cart/types";
 import type { CartItemCheck } from "../lib/orders/types";
 import { validateCartInputSchema } from "../lib/orders/validation";
+import {
+  evaluateSelectedSlot,
+  getLeadSignature,
+  getRequiredLeadMinutes,
+  describeInvalidSlot,
+  type SlotRow,
+} from "../lib/pickup/slot-validity";
 
 let passedCount = 0;
 let failedCount = 0;
@@ -1549,6 +1556,145 @@ assert(
   /c\.is_visible or c\.archived_at is not null/.test(checkFn23) && /archived_at is null/.test(checkFn23) && /is_available and archived_at is null/.test(checkFn23),
   "Live menu SQL: the cart check applies the same availability rules as place_order (including hidden categories)"
 );
+
+// --- Pickup slot revalidated after cart changes (GitHub issue #76) ---
+console.log("\n--- Pickup Slot Revalidation After Cart Changes (#76) ---");
+
+// A model of the database's available_slots(): 30-minute slots 10:00-21:30 IST on one day,
+// each offered when it starts at or after now + lead time. (The real function is exercised by
+// supabase/tests/010; this model lets us test the decision rules on their own.)
+const NOW_MS = Date.parse("2026-11-10T04:30:00.000Z"); // 10:00 AM IST
+const slotAt = (hourIst: number, minute: number) =>
+  new Date(Date.parse(`2026-11-10T00:00:00+05:30`) + (hourIst * 60 + minute) * 60_000).toISOString();
+const modelAvailableSlots = (leadMinutes: number, full: string[] = []): SlotRow[] => {
+  const rows: SlotRow[] = [];
+  for (let m = 10 * 60; m <= 21 * 60 + 30; m += 30) {
+    const start = slotAt(Math.floor(m / 60), m % 60);
+    if (Date.parse(start) >= NOW_MS + leadMinutes * 60_000) {
+      rows.push({ slot_start: start, remaining: full.includes(start) ? 0 : 3 });
+    }
+  }
+  return rows;
+};
+const judge = (slotStart: string, leadMinutes: number, full: string[] = []) =>
+  evaluateSelectedSlot({
+    slotStart,
+    requiredLeadMinutes: leadMinutes,
+    slotsForCart: modelAvailableSlots(leadMinutes, full),
+    slotsAnyLead: modelAvailableSlots(0, full),
+  });
+
+const SLOT_1230 = slotAt(12, 30); // 2.5 hours after "now"
+const SLOT_1500 = slotAt(15, 0);
+
+// 1. harmless: a short-lead cart keeps a later slot valid
+assert(judge(SLOT_1230, 60).valid === true, "Slot #76: a selected slot stays valid for a cart whose lead time it still satisfies");
+// 2. adding a product that needs a longer lead time invalidates the slot, for the right reason
+const afterAddingCake = judge(SLOT_1230, 240);
+assert(
+  !afterAddingCake.valid && !afterAddingCake.valid && afterAddingCake.reason === "LEAD_TIME_NOT_MET",
+  "Slot #76: adding an item with a longer lead time invalidates the selected slot (lead time)"
+);
+assert(judge(SLOT_1500, 240).valid === true, "Slot #76: a later slot is still valid for that longer lead time");
+// 3. lead time is the longest among the cart's products, not a sum and not per quantity
+assert(getRequiredLeadMinutes([60, 240, 60]) === 240 && getRequiredLeadMinutes([]) === 0, "Slot #76: required lead time is the longest lead time in the cart");
+// 4. removing the item makes the slot valid again
+assert(judge(SLOT_1230, 60).valid === true && !judge(SLOT_1230, 240).valid, "Slot #76: removing the long-lead item makes the same slot valid again");
+// 5. quantity / variant changes do not alter which products are in the cart, so they trigger no re-check
+const cartA = [
+  { productId: "p-cake", quantity: 1, variantId: "v-1" },
+  { productId: "p-puff", quantity: 2, variantId: "v-9" },
+];
+const cartQty = [
+  { productId: "p-cake", quantity: 5, variantId: "v-1" },
+  { productId: "p-puff", quantity: 2, variantId: "v-9" },
+];
+const cartVariant = [
+  { productId: "p-cake", quantity: 1, variantId: "v-2" },
+  { productId: "p-puff", quantity: 2, variantId: "v-9" },
+];
+const cartReordered = [cartA[1], cartA[0]];
+assert(
+  getLeadSignature(cartA) === getLeadSignature(cartQty) &&
+    getLeadSignature(cartA) === getLeadSignature(cartVariant) &&
+    getLeadSignature(cartA) === getLeadSignature(cartReordered),
+  "Slot #76: quantity, variant and ordering changes do not change the lead-time signature (lead time is per product)"
+);
+assert(
+  getLeadSignature(cartA) !== getLeadSignature([...cartA, { productId: "p-new", quantity: 1 }]) &&
+    getLeadSignature(cartA) !== getLeadSignature([cartA[0]]),
+  "Slot #76: adding or removing a product changes the signature, so the slot is re-checked"
+);
+// 6. other reasons a stored slot can go stale
+assert(
+  (() => {
+    const full = judge(SLOT_1230, 60, [SLOT_1230]);
+    return !full.valid && full.reason === "SLOT_FULL";
+  })(),
+  "Slot #76: a slot that has filled up since it was chosen is reported as full"
+);
+const passed = judge(slotAt(10, 0), 0); // exactly now is still offered by available_slots
+const longGone = judge("2026-11-09T06:30:00.000Z", 60); // yesterday: not offered even without lead time
+assert(passed.valid === true, "Slot #76: a slot starting exactly now (no lead time) is still offered");
+assert(!longGone.valid && longGone.reason === "SLOT_UNAVAILABLE", "Slot #76: a slot that is no longer offered at all (past / closed / outside hours) is reported as unavailable, not as a lead-time problem");
+assert(
+  (() => {
+    const r = judge(SLOT_1230, 0);
+    return r.valid;
+  })(),
+  "Slot #76: with no lead time the slot is judged only by availability"
+);
+assert(
+  evaluateSelectedSlot({ slotStart: "not a date", requiredLeadMinutes: 60, slotsForCart: modelAvailableSlots(60), slotsAnyLead: modelAvailableSlots(0) }).valid === false,
+  "Slot #76: an unparseable slot is never treated as valid"
+);
+
+// Messages: clear, no raw codes
+const leadText = describeInvalidSlot("LEAD_TIME_NOT_MET", "Tue, 10 Nov · 12:30 PM – 1:00 PM", 240);
+assert(
+  /no longer available/.test(leadText) && /4 hours of preparation/.test(leadText) && /choose a later time/.test(leadText) && !/LEAD_TIME|_/.test(leadText),
+  "Slot #76: the lead-time message explains what changed and what to do, without internal codes"
+);
+assert(/filled up/.test(describeInvalidSlot("SLOT_FULL", "x", 0)) && /no longer available/.test(describeInvalidSlot("SLOT_UNAVAILABLE", "x", 0)), "Slot #76: full and unavailable slots get their own readable messages");
+assert(/45 minutes of preparation/.test(describeInvalidSlot("LEAD_TIME_NOT_MET", "x", 45)), "Slot #76: short lead times are described in minutes");
+
+// Wiring (static): the server decides, the client only reacts
+const pickupActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/pickup/actions.ts"), "utf8");
+const cartContextSrc = fs.readFileSync(path.join(process.cwd(), "lib/cart/context.tsx"), "utf8");
+assert(
+  /\.strict\(\)/.test(pickupActionsSrc) && !/lead/i.test(pickupActionsSrc.slice(pickupActionsSrc.indexOf("validatePickupSlotSchema"), pickupActionsSrc.indexOf("export type ValidatePickupSlotResult"))),
+  "Slot #76: the slot check accepts only product ids and a slot start: a client-supplied lead time or availability is impossible"
+);
+assert(
+  /from\("products"\)[\s\S]*?lead_time_minutes[\s\S]*?\.is\("archived_at", null\)/.test(pickupActionsSrc) && /rpc\("available_slots"/.test(pickupActionsSrc) && /createAdminClient\(\)/.test(pickupActionsSrc),
+  "Slot #76: lead time is read from the live products table and availability from the database's available_slots"
+);
+assert(!/\.(insert|update|delete|upsert)\(/.test(pickupActionsSrc) && /slotcheck:ip:/.test(pickupActionsSrc), "Slot #76: the slot check is read-only and rate limited");
+assert(
+  /getLeadSignature\(state\.items\)/.test(cartContextSrc) && /validatePickupSlotAction\(/.test(cartContextSrc) && /INVALIDATE_PICKUP_SLOT/.test(cartContextSrc) &&
+    /\[isHydrated, leadSignature, selectedSlotStart\]/.test(cartContextSrc),
+  "Slot #76: the cart re-checks the slot when its products change or a stored slot is restored"
+);
+const reducerInvalidate = cartContextSrc.slice(cartContextSrc.indexOf('case "INVALIDATE_PICKUP_SLOT"'), cartContextSrc.indexOf('case "CLEAR_PICKUP"'));
+assert(
+  /pickupSlot: null/.test(reducerInvalidate) && !/pickupDate/.test(reducerInvalidate.replace(/\/\/.*$/gm, "")),
+  "Slot #76: an invalid slot is cleared but the chosen date is kept, and no other slot is picked for the customer"
+);
+assert(/pickupSlotNotice: action\.payload \? null : state\.pickupSlotNotice/.test(cartContextSrc), "Slot #76: choosing a new slot clears the notice");
+assert(
+  /isRetryOfUnconfirmedAttempt/.test(checkoutSrc) && /if \(!isRetryOfUnconfirmedAttempt\) \{[\s\S]*?validatePickupSlotAction\(/.test(checkoutSrc),
+  "Slot #76: checkout checks the pickup time before placing the order, but not for a retry of an unconfirmed attempt (idempotent replay stays intact)"
+);
+assert(
+  checkoutSrc.indexOf("validatePickupSlotAction(") < checkoutSrc.indexOf("await placeOrderAction("),
+  "Slot #76: the pickup check runs before order creation is attempted"
+);
+assert(
+  /PICKUP_TIME_CODES\.has\(actionResult\.code\)[\s\S]*?invalidatePickupSlot\(actionResult\.error\)/.test(checkoutSrc) &&
+    ["LEAD_TIME_NOT_MET", "SLOT_FULL", "OUTSIDE_OPENING_HOURS", "CLOSED_DAY"].every((c) => checkoutSrc.includes(`"${c}"`)),
+  "Slot #76: if the database still refuses the pickup time, the slot is cleared so the customer chooses again"
+);
+assert(/disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc), "Slot #76: the live-cart gate from #75 still blocks Place Order");
 
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);

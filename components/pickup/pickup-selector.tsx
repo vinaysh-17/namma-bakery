@@ -9,12 +9,14 @@ import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
 import { getIstDateString } from "@/lib/utils/date";
 import { PickupDatePicker } from "./pickup-date-picker";
 import { PickupSlotPicker } from "./pickup-slot-picker";
+import { PickupSlotNotice } from "./pickup-slot-notice";
 
 export function PickupSelector() {
   const {
     items,
     pickupDate,
     pickupSlot,
+    pickupSlotNotice,
     setPickupDate,
     setPickupSlot,
   } = useCart();
@@ -130,6 +132,9 @@ export function PickupSelector() {
           </div>
         )}
       </div>
+
+      {/* Why the previously chosen time was cleared (#76) */}
+      <PickupSlotNotice message={pickupSlotNotice} />
 
       {/* 1. Date Picker */}
       <PickupDatePicker
