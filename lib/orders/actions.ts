@@ -157,6 +157,7 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
       p_pickup: parsed.data.pickupSlotStart,
       p_notes: parsed.data.customerDetails.customerNotes?.trim() || null,
       p_items: p_items,
+      p_idempotency_key: parsed.data.idempotencyKey ?? null,
     });
 
     // 8. Handle and translate database business errors safely
@@ -253,6 +254,15 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
           code: "INVALID_PHONE",
         };
       }
+      if (msg.includes("IDEMPOTENCY_KEY_REUSED") || msg.includes("INVALID_IDEMPOTENCY_KEY")) {
+        // A stale or foreign checkout reference: the client starts a fresh attempt next time
+        return {
+          success: false,
+          error:
+            "We could not confirm this checkout attempt. Please review your order and place it again.",
+          code: "IDEMPOTENCY_KEY_REJECTED",
+        };
+      }
       if (msg.includes("INVALID_ITEMS")) {
         return {
           success: false,
@@ -278,12 +288,17 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
       };
     }
 
-    await notifyStaffChanged();
+    // A replay returns the order that was already placed: staff were already notified
+    const replayed = row.replayed === true;
+    if (!replayed) {
+      await notifyStaffChanged();
+    }
     return {
       success: true,
       orderId: row.order_id,
       orderNumber: row.order_number,
       publicToken: row.public_token,
+      replayed,
     };
   } catch (err) {
     // Avoid logging sensitive client PII

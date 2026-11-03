@@ -37,6 +37,7 @@ import {
   adminStaffRoleSchema,
 } from "../lib/admin/validation";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
+import { createIdempotencyKey, IDEMPOTENCY_KEY_PATTERN } from "../lib/orders/idempotency";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
 import { calculateOperationalSummary, getOrderPickupDateIst } from "../lib/staff/summary";
 import type { StaffOrder } from "../lib/staff/types";
@@ -758,6 +759,31 @@ assert(
 );
 
 // --- 11. Custom Cake Tracking Dashboard Security Boundaries ---
+
+// --- Order placement idempotency (issue #98) ---
+console.log("\n--- Order Idempotency: keys, schema, wiring ---");
+const goodKey = createIdempotencyKey();
+assert(IDEMPOTENCY_KEY_PATTERN.test(goodKey), "Idempotency: generated key matches the database format");
+assert(goodKey !== createIdempotencyKey(), "Idempotency: every checkout attempt gets a different key");
+assert(
+  placeOrderInputSchema.safeParse({ ...validBaseOrder, idempotencyKey: goodKey }).success,
+  "Idempotency: order input with a valid key is accepted"
+);
+assert(placeOrderInputSchema.safeParse(validBaseOrder).success, "Idempotency: order input without a key still accepted (backward compatible)");
+assert(!placeOrderInputSchema.safeParse({ ...validBaseOrder, idempotencyKey: "short" }).success, "Idempotency: too-short key rejected");
+assert(!placeOrderInputSchema.safeParse({ ...validBaseOrder, idempotencyKey: "has spaces and symbols!!" }).success, "Idempotency: key with illegal characters rejected");
+assert(!placeOrderInputSchema.safeParse({ ...validBaseOrder, idempotencyKey: "x".repeat(101) }).success, "Idempotency: over-long key rejected");
+
+const ordersAction = fs.readFileSync(path.join(process.cwd(), "lib/orders/actions.ts"), "utf8");
+assert(/p_idempotency_key: parsed\.data\.idempotencyKey \?\? null/.test(ordersAction), "Idempotency: server action passes the key to place_order");
+assert(/if \(!replayed\) \{\s*await notifyStaffChanged\(\)/.test(ordersAction), "Idempotency: a replay does not notify staff a second time");
+const checkoutSrc = fs.readFileSync(path.join(process.cwd(), "components/checkout/checkout-form.tsx"), "utf8");
+assert(/idempotencyKey: attemptRef\.current\.key/.test(checkoutSrc), "Idempotency: checkout form sends the attempt key");
+assert(/catch \(err\) \{[\s\S]*?inFlightRef\.current = false/.test(checkoutSrc) && !/catch \(err\) \{[\s\S]{0,400}attemptRef\.current = null/.test(checkoutSrc), "Idempotency: a network error keeps the same key for the retry");
+assert(/attemptRef\.current = null;\s*inFlightRef\.current = false;\s*setSubmitError\(actionResult\.error\)/.test(checkoutSrc), "Idempotency: a definite server refusal starts a new attempt");
+const migration21 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0021_order_idempotency.sql"), "utf8");
+assert(/create unique index if not exists orders_idempotency_key_uidx[\s\S]*where idempotency_key is not null/.test(migration21), "Idempotency: database enforces one order per key (unique index)");
+assert(/to service_role;/.test(migration21) && !/to (anon|authenticated|public)/.test(migration21.replace(/revoke[\s\S]*?;/g, "")), "Idempotency: place_order remains service_role only");
 
 // --- Admin order history deletion ---
 console.log("\n--- Admin Order History: ranges + authorization wiring ---");

@@ -21,9 +21,16 @@ import { CheckoutPickupSummary } from "./checkout-pickup-summary";
 import { PaymentMethodNote } from "./payment-method-note";
 import { CheckoutOrderSummary } from "./checkout-order-summary";
 import { formatPaise } from "@/lib/utils/money";
+import { createIdempotencyKey } from "@/lib/orders/idempotency";
 
 export function CheckoutForm() {
   const router = useRouter();
+  // The idempotency key of the current checkout attempt. It is reused when the SAME order is
+  // submitted again after an unknown outcome (lost response), and replaced as soon as the
+  // attempt is definitively finished or the order content changes.
+  const attemptRef = React.useRef<{ key: string; fingerprint: string } | null>(null);
+  // Synchronous double-submit guard (state updates are asynchronous)
+  const inFlightRef = React.useRef(false);
   const {
     items,
     itemCount,
@@ -69,7 +76,7 @@ export function CheckoutForm() {
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isSubmitting) return;
+    if (isSubmitting || inFlightRef.current) return;
 
     // 1. Guard against empty cart or missing pickup slot
     if (isEmpty || !pickupSlot?.slotStart) {
@@ -103,6 +110,7 @@ export function CheckoutForm() {
     setErrors({});
     setSubmitError(null);
     setIsSubmitting(true);
+    inFlightRef.current = true;
 
     try {
       // 3. Prepare payload for server-side verification and order placement
@@ -122,13 +130,29 @@ export function CheckoutForm() {
         // pickup details. Staff read them in full as "Customer Instructions" on the order.
       }));
 
+      // Same order content as the previous (unconfirmed) attempt => same key, so a retry after
+      // a lost response returns the order that was already placed. Any change => a new key.
+      const fingerprint = JSON.stringify({
+        customer: result.data,
+        pickup: pickupSlot.slotStart,
+        items: itemsPayload,
+      });
+      if (!attemptRef.current || attemptRef.current.fingerprint !== fingerprint) {
+        attemptRef.current = { key: createIdempotencyKey(), fingerprint };
+      }
+
       const actionResult = await placeOrderAction({
         customerDetails: result.data,
         pickupSlotStart: pickupSlot.slotStart,
         items: itemsPayload,
+        idempotencyKey: attemptRef.current.key,
       });
 
       if (!actionResult.success) {
+        // The server answered with a definite refusal (no order was created): the next
+        // submit is a fresh attempt with a new key.
+        attemptRef.current = null;
+        inFlightRef.current = false;
         setSubmitError(actionResult.error);
         setIsSubmitting(false);
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -136,12 +160,16 @@ export function CheckoutForm() {
       }
 
       // 4. On confirmed success: clear cart state and redirect to order tracking route
+      attemptRef.current = null;
       clearCart();
       router.push(`/orders/${actionResult.publicToken}?confirmed=true`);
     } catch (err) {
+      // Unknown outcome: the order may or may not have been placed. Keep the SAME key so
+      // "try again" cannot create a duplicate.
       console.error("[CheckoutForm] Submission failed:", err);
+      inFlightRef.current = false;
       setSubmitError(
-        "A connection issue occurred while submitting your order. Please check your network and try again."
+        "A connection issue occurred while submitting your order. Please check your network and try again. If your order was already placed, retrying will not create a second one."
       );
       setIsSubmitting(false);
       window.scrollTo({ top: 0, behavior: "smooth" });

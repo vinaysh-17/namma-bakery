@@ -62,6 +62,14 @@ export const placeOrderInputSchema = z
       .array(placeOrderItemSchema)
       .min(1, "At least 1 item is required to place an order")
       .max(20, "An order cannot contain more than 20 items"),
+    /**
+     * Identifies one checkout attempt so a retry after a lost response returns the same
+     * order instead of creating a second one. Optional for backward compatibility.
+     */
+    idempotencyKey: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{16,100}$/, "Invalid checkout reference")
+      .optional(),
   })
   .strict();
 

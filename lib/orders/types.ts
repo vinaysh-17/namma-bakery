@@ -49,6 +49,8 @@ export type PlaceOrderResult =
       orderId: string;
       orderNumber: string;
       publicToken: string;
+      /** True when this was a retry of an already-placed order (no new order was created) */
+      replayed?: boolean;
     }
   | {
       success: false;
