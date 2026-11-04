@@ -30,6 +30,11 @@ export interface ProductVariant {
   archived_at: string | null;
 }
 
+/**
+ * A cake price rule as customers may see it (GitHub issue #72). It deliberately has NO internal
+ * fields: the admin-only `note` and `verified` live in `AdminPriceTierRule` (lib/admin/types.ts)
+ * and must never be selected by customer-facing queries or passed to customer components.
+ */
 export interface PriceTierRule {
   id: string;
   tier_id: string;
@@ -38,8 +43,6 @@ export interface PriceTierRule {
   finish: CakeFinish;
   price_paise: number;
   is_active: boolean;
-  verified?: boolean;
-  note?: string | null;
 }
 
 export interface PriceTier {

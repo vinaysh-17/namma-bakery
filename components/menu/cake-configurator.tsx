@@ -362,13 +362,6 @@ export function CakeConfigurator({
         </div>
       )}
 
-      {/* Pricing Rule Note if owner provided note */}
-      {currentRule?.note && (
-        <div className="rounded-sm border border-border/60 bg-secondary/30 p-3 text-[11px] text-muted-foreground">
-          {currentRule.note}
-        </div>
-      )}
-
       {/* Add to Cart Action */}
       <div className="border-t border-border pt-4 flex flex-col gap-4">
         {isOrderable && (

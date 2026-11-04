@@ -10,8 +10,8 @@ import {
   X,
   ArrowLeft,
 } from "lucide-react";
-import type { AdminPriceTierWithRules, AdminProduct } from "@/lib/admin/types";
-import type { PriceTierRule, EggType, CakeFinish } from "@/lib/menu/types";
+import type { AdminPriceTierRule, AdminPriceTierWithRules, AdminProduct } from "@/lib/admin/types";
+import type { EggType, CakeFinish } from "@/lib/menu/types";
 import {
   upsertPriceTierRuleAction,
   togglePriceTierRuleAction,
@@ -47,7 +47,7 @@ export function AdminCakeTiersView({
   const [selectedTierId, setSelectedTierId] = React.useState<string>(
     initialTierId || tiers[0]?.id || ""
   );
-  const [editingRule, setEditingRule] = React.useState<PriceTierRule | null>(
+  const [editingRule, setEditingRule] = React.useState<AdminPriceTierRule | null>(
     null
   );
   const [isAddingRule, setIsAddingRule] = React.useState(false);
@@ -86,7 +86,7 @@ export function AdminCakeTiersView({
     return options;
   }, [editingRule]);
 
-  const handleOpenEdit = (rule: PriceTierRule) => {
+  const handleOpenEdit = (rule: AdminPriceTierRule) => {
     setEditingRule(rule);
     setIsAddingRule(false);
     setPriceRupees((rule.price_paise / 100).toString());
@@ -160,7 +160,7 @@ export function AdminCakeTiersView({
     onActionSuccess();
   };
 
-  const handleToggleActive = async (rule: PriceTierRule) => {
+  const handleToggleActive = async (rule: AdminPriceTierRule) => {
     const res = await togglePriceTierRuleAction(rule.id, !rule.is_active);
     if (res.success) {
       onActionSuccess();

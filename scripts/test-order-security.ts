@@ -49,6 +49,8 @@ import {
 import { getCustomCakeStaffStatus } from "../lib/staff/custom-cake-workflow";
 import type { CustomCakeLinkedOrder, CustomCakeRequest } from "../lib/custom-cake/types";
 import type { OrderStatus } from "../lib/orders/types";
+import type { PriceTierRule } from "../lib/menu/types";
+import type { AdminPriceTierRule } from "../lib/admin/types";
 import { formatIstDate, getIstDateString } from "../lib/utils/date";
 import { mapCartRpcError, extractProductName } from "../lib/orders/cart-errors";
 import { deriveCartIssues } from "../lib/cart/cart-issues";
@@ -1703,6 +1705,57 @@ assert(
   "Slot #76: if the database still refuses the pickup time, the slot is cleared so the customer chooses again"
 );
 assert(/disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc), "Slot #76: the live-cart gate from #75 still blocks Place Order");
+
+// --- Internal cake price-rule notes never reach customers (GitHub issue #72, customer side) ---
+console.log("\n--- Internal Price-Rule Notes Stay Admin-Only: Customer Side (#72) ---");
+
+// Compile-time guarantee (checked by `tsc --noEmit`): the customer type cannot carry internal fields.
+const publicRuleShape: PriceTierRule = { id: "r1", tier_id: "t1", weight_grams: 500, egg_type: "EGG", finish: "STANDARD", price_paise: 50000, is_active: true };
+// @ts-expect-error -- `note` is admin-only and is not part of the customer PriceTierRule type
+void publicRuleShape.note;
+// @ts-expect-error -- `verified` is admin-only and is not part of the customer PriceTierRule type
+void publicRuleShape.verified;
+const adminRuleShape: AdminPriceTierRule = { ...publicRuleShape, note: "Checking", verified: false };
+assert(
+  !("note" in publicRuleShape) && !("verified" in publicRuleShape) && adminRuleShape.note === "Checking" && adminRuleShape.verified === false,
+  "Notes #72: the customer price-rule type has no note/verified; the admin type has both"
+);
+
+// Every price_tier_rules selection in the customer menu queries lists explicit, public columns only
+const menuQueriesSrc72 = fs.readFileSync(path.join(process.cwd(), "lib/menu/queries.ts"), "utf8");
+const ruleSelects72 = [...menuQueriesSrc72.matchAll(/price_tier_rules\s*\(([^)]*)\)/g)].map((m) => m[1]);
+assert(
+  ruleSelects72.length >= 2 && ruleSelects72.every((cols) => !/\bnote\b|\bverified\b|\*/.test(cols)),
+  "Notes #72: customer menu queries never select note, verified or * from price_tier_rules",
+  JSON.stringify(ruleSelects72)
+);
+
+// No customer-facing source reads or renders the internal fields
+const customerDirs72 = ["app/menu", "components/menu", "components/cart", "components/checkout", "lib/menu", "lib/cart", "lib/orders"];
+const listFiles72 = (dir: string): string[] =>
+  fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? listFiles72(path.join(dir, e.name)) : /\.(ts|tsx)$/.test(e.name) ? [path.join(dir, e.name)] : []
+  );
+const offenders72 = customerDirs72
+  .flatMap(listFiles72)
+  .filter((f) => {
+    const src = fs.readFileSync(path.join(process.cwd(), f), "utf8");
+    return /(rule|Rule|r)\??\.(note|verified)\b/.test(src) || /price_tier_rules\s*\(\s*\*/.test(src);
+  });
+assert(offenders72.length === 0, "Notes #72: no customer-facing file reads a price rule's note/verified or selects price_tier_rules(*)", JSON.stringify(offenders72));
+
+const cakeConfiguratorSrc72 = fs.readFileSync(path.join(process.cwd(), "components/menu/cake-configurator.tsx"), "utf8");
+assert(!/\.note\b/.test(cakeConfiguratorSrc72) && !/verified/.test(cakeConfiguratorSrc72), "Notes #72: the cake configurator no longer renders a rule note");
+
+// Admin keeps the internal fields through its own type
+const adminTiersSrc72 = fs.readFileSync(path.join(process.cwd(), "components/admin/admin-cake-tiers-view.tsx"), "utf8");
+const adminPricingSrc72 = fs.readFileSync(path.join(process.cwd(), "components/admin/admin-product-pricing-view.tsx"), "utf8");
+assert(
+  [adminTiersSrc72, adminPricingSrc72].every(
+    (src) => /import type \{[^}]*\bAdminPriceTierRule\b[^}]*\} from "@\/lib\/admin\/types"/.test(src) && !/\bPriceTierRule\b(?!Action)/.test(src.replace(/AdminPriceTierRule/g, "")) && /rule\.note/.test(src)
+  ),
+  "Notes #72: both admin pricing screens use the admin rule type and still show the note"
+);
 
 // --- Menu cards must not offer products whose variants are all unavailable (GitHub issue #77) ---
 console.log("\n--- Unavailable Variants Cannot Be Added (#77) ---");

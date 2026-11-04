@@ -292,8 +292,7 @@ export const getProductBySlug = cache(
             egg_type,
             finish,
             price_paise,
-            is_active,
-            note
+            is_active
           )
         ),
         product_images (

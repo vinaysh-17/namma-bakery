@@ -27,8 +27,19 @@ export interface AdminProduct extends Product {
   price_tiers?: PriceTier | null;
 }
 
+/**
+ * A cake price rule as the admin portal sees it, including the internal fields that customers
+ * must never receive (GitHub issue #72).
+ */
+export interface AdminPriceTierRule extends PriceTierRule {
+  /** The owner has confirmed this price. Internal only. */
+  verified: boolean;
+  /** Internal staff note about the price. Never shown to customers. */
+  note: string | null;
+}
+
 export interface AdminPriceTierWithRules extends PriceTier {
-  price_tier_rules: PriceTierRule[];
+  price_tier_rules: AdminPriceTierRule[];
 }
 
 export interface SpecialClosure {
