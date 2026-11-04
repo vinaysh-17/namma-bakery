@@ -7,6 +7,7 @@ import type {
   AdminCategory,
   AdminProduct,
   AdminPriceTierWithRules,
+  AdminPriceTierRule,
   LocationInfo,
   StoreSettings,
   SpecialClosure,
@@ -197,8 +198,18 @@ export async function getAdminProducts(): Promise<{
   }
 }
 
+type PriceRuleNoteRow = { note: string | null; verified: boolean };
+type PriceRuleRow = Omit<AdminPriceTierRule, "note" | "verified"> & {
+  price_tier_rule_notes?: PriceRuleNoteRow | PriceRuleNoteRow[] | null;
+};
+type PriceTierRow = Omit<AdminPriceTierWithRules, "price_tier_rules"> & {
+  price_tier_rules: PriceRuleRow[] | null;
+};
+
 /**
- * Fetches all cake price tiers and their pricing rules.
+ * Fetches all cake price tiers and their pricing rules, including the internal note / verified
+ * flag. Those live in the admin-only table price_tier_rule_notes (GitHub issue #72): it is read
+ * with the admin's own session, so RLS (is_admin()) returns nothing to anyone else.
  */
 export async function getAdminPriceTiers(): Promise<{
   tiers: AdminPriceTierWithRules[];
@@ -209,14 +220,30 @@ export async function getAdminPriceTiers(): Promise<{
 
     const { data, error } = await supabase
       .from("price_tiers")
-      .select("*, price_tier_rules(*)")
+      .select("*, price_tier_rules(*, price_tier_rule_notes(note, verified))")
       .order("sort_order", { ascending: true });
 
     if (error) {
       return { tiers: [], error: error.message };
     }
 
-    return { tiers: (data as AdminPriceTierWithRules[]) ?? [] };
+    // Flatten the one-to-one notes row back onto each rule (rules without a notes row have no
+    // note and are not verified).
+    const tiers: AdminPriceTierWithRules[] = ((data as PriceTierRow[] | null) ?? []).map(
+      (tier) => ({
+        ...tier,
+        price_tier_rules: (tier.price_tier_rules ?? []).map(
+          ({ price_tier_rule_notes, ...rule }) => {
+            const notes = Array.isArray(price_tier_rule_notes)
+              ? price_tier_rule_notes[0]
+              : price_tier_rule_notes;
+            return { ...rule, note: notes?.note ?? null, verified: notes?.verified ?? false };
+          }
+        ),
+      })
+    );
+
+    return { tiers };
   } catch (err) {
     console.error("[getAdminPriceTiers] Failed:", err);
     return { tiers: [], error: "Failed to load price tiers." };

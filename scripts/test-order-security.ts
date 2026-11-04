@@ -1911,6 +1911,67 @@ assert(
   "A11y #77: variant choices expose which one is selected (aria-pressed)"
 );
 
+// --- Internal price-rule notes live in an admin-only table (GitHub issue #72, database side) ---
+console.log("\n--- Internal Price-Rule Notes Stay Admin-Only: Database (#72) ---");
+const migration24 = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0024_price_tier_rule_notes.sql"), "utf8");
+const migration24Sql = migration24.replace(/--.*$/gm, "");
+assert(
+  /create table if not exists public\.price_tier_rule_notes/.test(migration24Sql) &&
+    /rule_id\s+uuid primary key references public\.price_tier_rules\(id\) on delete cascade/.test(migration24Sql) &&
+    /note\s+text/.test(migration24Sql) && /verified\s+boolean not null default false/.test(migration24Sql),
+  "Notes DB #72: notes and the verified flag live in their own table, one row per price rule"
+);
+assert(
+  /alter table public\.price_tier_rule_notes enable row level security/.test(migration24Sql) &&
+    /revoke all on public\.price_tier_rule_notes from public, anon, authenticated/.test(migration24Sql) &&
+    !/grant[^;]*on public\.price_tier_rule_notes[^;]*\banon\b/.test(migration24Sql),
+  "Notes DB #72: RLS is on and anon gets no privilege on the notes table (overrides 0003 default grants)"
+);
+assert(
+  /create policy price_rule_notes_admin_all on public\.price_tier_rule_notes\s+for all to authenticated\s+using \(is_admin\(\)\)\s+with check \(is_admin\(\)\)/.test(migration24Sql) &&
+    (migration24Sql.match(/create policy/g) || []).length === 1,
+  "Notes DB #72: the only policy allows admins (is_admin()) to read and write - not customers, not employees"
+);
+assert(
+  migration24Sql.indexOf("insert into public.price_tier_rule_notes") > 0 &&
+    migration24Sql.indexOf("insert into public.price_tier_rule_notes") < migration24Sql.indexOf("drop column if exists note") &&
+    /drop column if exists note,\s*drop column if exists verified/.test(migration24Sql) &&
+    /column_name = 'note'/.test(migration24Sql),
+  "Notes DB #72: existing notes are copied BEFORE the old columns are dropped, and the copy is re-runnable"
+);
+assert(
+  /create trigger audit_price_rule_notes[\s\S]*execute function public\.audit_price_rule_note_change\(\)/.test(migration24Sql) &&
+    migration24Sql.indexOf("create trigger audit_price_rule_notes") > migration24Sql.indexOf("drop column if exists note"),
+  "Notes DB #72: future note changes are audit-logged (trigger added after the one-off copy)"
+);
+assert(
+  /create or replace function public\.audit_price_rule_note_change\(\) returns trigger/.test(migration24Sql) &&
+    /entity_id,\s*before_data, after_data\)\s*values \(auth\.uid\(\), current_actor_role\(\), [^,]*,\s*'price_tier_rule_notes', coalesce\(new\.rule_id, old\.rule_id\)::text/.test(migration24Sql) &&
+    !/execute function public\.audit_row_change\(\)/.test(migration24Sql),
+  "Notes DB #72: notes use a DEDICATED audit trigger (not the shared audit_row_change(), which would leave entity_id NULL since this table's key is rule_id, not id/user_id/location_id); the shared function is untouched"
+);
+const adminQueriesSrc72 = fs.readFileSync(path.join(process.cwd(), "lib/admin/queries.ts"), "utf8");
+const adminActionsSrc72 = fs.readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8");
+const tiersFn72 = adminQueriesSrc72.slice(adminQueriesSrc72.indexOf("export async function getAdminPriceTiers"), adminQueriesSrc72.indexOf("export async function getAdminPriceTiers") + 2000);
+assert(
+  /price_tier_rules\(\*, price_tier_rule_notes\(note, verified\)\)/.test(tiersFn72) && /const supabase = await createClient\(\)/.test(tiersFn72) && !/createAdminClient/.test(tiersFn72),
+  "Notes DB #72: admin reads notes with the admin's own session (RLS applies), not the service role"
+);
+const ruleActions72 = adminActionsSrc72.slice(adminActionsSrc72.indexOf("// ---------------------------------------------------------------- CAKE TIER RULES"), adminActionsSrc72.indexOf("// ---------------------------------------------------------------- STORE OPERATIONS"));
+assert(
+  /\.from\("price_tier_rule_notes"\)\s*\.upsert\(\s*\{ rule_id: ruleId, note, updated_at:/.test(ruleActions72) &&
+    !/verified/.test(ruleActions72.replace(/\/\*[\s\S]*?\*\//g, "")) &&
+    !/\bnote: data\.note/.test(ruleActions72) &&
+    !/createAdminClient/.test(ruleActions72) &&
+    (ruleActions72.match(/await assertAdminSession\(\)/g) || []).length === 2,
+  "Notes DB #72: admin saves notes in the notes table (never on price_tier_rules), keeps verified, uses no service role, and checks the admin session"
+);
+const seed72 = fs.readFileSync(path.join(process.cwd(), "supabase/seed.sql"), "utf8");
+assert(
+  !/insert into price_tier_rules \([^)]*\b(note|verified)\b/.test(seed72) && (seed72.match(/insert into price_tier_rule_notes \(rule_id, note\)/g) || []).length === 2,
+  "Notes DB #72: the seed writes notes to the notes table (a local reset still works after the columns are dropped)"
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");

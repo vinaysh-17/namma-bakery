@@ -571,6 +571,25 @@ export async function deleteVariantAction(
 
 // ---------------------------------------------------------------- CAKE TIER RULES
 
+/**
+ * Saves a price rule's internal note in the admin-only table price_tier_rule_notes (GitHub issue
+ * #72). Uses the admin's own session, so RLS (is_admin()) applies. Only the note is written:
+ * an existing `verified` value is kept, and a new row starts unverified.
+ */
+async function savePriceRuleNote(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ruleId: string,
+  note: string | null
+) {
+  const { error } = await supabase
+    .from("price_tier_rule_notes")
+    .upsert(
+      { rule_id: ruleId, note, updated_at: new Date().toISOString() },
+      { onConflict: "rule_id" }
+    );
+  return error;
+}
+
 export async function upsertPriceTierRuleAction(
   rawInput: AdminPriceTierRuleInput
 ): Promise<AdminActionResult<{ id: string }>> {
@@ -597,7 +616,6 @@ export async function upsertPriceTierRuleAction(
           finish: data.finish,
           price_paise: data.price_paise,
           is_active: data.is_active,
-          note: data.note || null,
         })
         .eq("id", id);
 
@@ -611,8 +629,16 @@ export async function upsertPriceTierRuleAction(
         }
         return { success: false, error: error.message };
       }
+
+      const noteError = await savePriceRuleNote(supabase, id, data.note || null);
       revalidatePath("/admin");
       revalidatePath("/menu");
+      if (noteError) {
+        return {
+          success: false,
+          error: "The price was saved, but its internal note could not be saved. Please try again.",
+        };
+      }
       return { success: true, data: { id } };
     } else {
       const { data: inserted, error } = await supabase
@@ -624,7 +650,6 @@ export async function upsertPriceTierRuleAction(
           finish: data.finish,
           price_paise: data.price_paise,
           is_active: data.is_active,
-          note: data.note || null,
         })
         .select("id")
         .single();
@@ -639,8 +664,19 @@ export async function upsertPriceTierRuleAction(
         }
         return { success: false, error: error?.message || "Failed to add price rule." };
       }
+
+      // Only create a notes row when there is a note to keep
+      const newNote = data.note || null;
+      const noteError = newNote ? await savePriceRuleNote(supabase, inserted.id, newNote) : null;
       revalidatePath("/admin");
       revalidatePath("/menu");
+      if (noteError) {
+        return {
+          success: false,
+          error:
+            "The price rule was added, but its internal note could not be saved. Edit the rule to add the note again.",
+        };
+      }
       return { success: true, data: { id: inserted.id } };
     }
   } catch (err) {

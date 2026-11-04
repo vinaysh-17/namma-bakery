@@ -1,6 +1,7 @@
 -- Namma Bakery SEED (development / demo only)
 -- SOURCE: photographs of the in-store cake price sheet and counter menu. NOTHING here is confirmed by the bakery.
--- Every price rule is inserted with verified = false; the owner confirms them in the admin before launch.
+-- No price rule is seeded as verified (price_tier_rule_notes.verified defaults to false, and
+-- rules with no note get no row there at all); the owner confirms them in the admin before launch.
 -- PLACEHOLDERS (marked TBC): opening hours, slot capacity, lead times. Phone / address / pincode are left NULL on purpose.
 
 insert into locations (slug, name, locality, maps_url) values
@@ -33,9 +34,8 @@ with t(tier, h_e, h_l, k_e, k_l, rp_e, rp_l, sh_e, sh_l, gp_e, gp_l) as (values
   ('T4', 350, 400, 700, 800, 800, 900, 850, 950, 900, 1000),
   ('T5', 375, 425, 750, 850, 850, 950, 900, 1000, 950, 1050),
   ('T6', 400, 450, 800, 900, 900, 1000, 950, 1050, 1000, 1100))
-insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise, note)
-select pt.id, r.w, r.e::egg_type, r.f::cake_finish, r.p * 100,
-       case when r.f <> 'STANDARD' then 'Assumed 1 kg price from price sheet; owner to confirm' end
+insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise)
+select pt.id, r.w, r.e::egg_type, r.f::cake_finish, r.p * 100
 from t
 join price_tiers pt on pt.name = t.tier
 cross join lateral (values
@@ -48,13 +48,23 @@ cross join lateral (values
 
 -- Special rows: the photographed sheet is misaligned for these, so only unambiguous values are seeded.
 -- Red Velvet is eggless only. Its shape-cake / gum-paste prices are NOT seeded (owner to confirm).
-insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise, note)
-select id, w, 'EGGLESS', f::cake_finish, p * 100, 'Seeded from price sheet; owner to confirm'
+insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise)
+select id, w, 'EGGLESS', f::cake_finish, p * 100
 from price_tiers, (values (500,'STANDARD',475), (1000,'STANDARD',875), (1000,'RICE_PAPER',975)) v(w, f, p)
 where name = 'SPECIAL_RED_VELVET';
 -- Rainbow is a 1.5 kg eggless cake only.
-insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise, note)
-select id, 1500, 'EGGLESS', 'STANDARD', 150000, 'Seeded from price sheet; owner to confirm' from price_tiers where name = 'SPECIAL_RAINBOW';
+insert into price_tier_rules (tier_id, weight_grams, egg_type, finish, price_paise)
+select id, 1500, 'EGGLESS', 'STANDARD', 150000 from price_tiers where name = 'SPECIAL_RAINBOW';
+
+-- Internal pricing notes (admin-only table, migration 0024 / issue #72). Same notes as before.
+insert into price_tier_rule_notes (rule_id, note)
+select r.id, 'Assumed 1 kg price from price sheet; owner to confirm'
+from price_tier_rules r join price_tiers pt on pt.id = r.tier_id
+where pt.name in ('T1', 'T2', 'T3', 'T4', 'T5', 'T6') and r.finish <> 'STANDARD';
+insert into price_tier_rule_notes (rule_id, note)
+select r.id, 'Seeded from price sheet; owner to confirm'
+from price_tier_rules r join price_tiers pt on pt.id = r.tier_id
+where pt.name in ('SPECIAL_RED_VELVET', 'SPECIAL_RAINBOW');
 
 -- ---------------------------------------------------------------- cake products (one per flavour)
 -- lead_time_minutes = 240 is a PLACEHOLDER (TBC).
