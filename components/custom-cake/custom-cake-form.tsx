@@ -26,6 +26,7 @@ import {
   customCakePickupDateSchema,
   getEarliestCustomCakePickupDate,
 } from "@/lib/custom-cake/validation";
+import { cn } from "@/lib/utils";
 
 const CAKE_OCCASIONS = [
   "Birthday Celebration",
@@ -110,6 +111,8 @@ export function CustomCakeForm() {
   // File upload state
   const [referenceFile, setReferenceFile] = React.useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const dragCounterRef = React.useRef(0);
 
   // UI state
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -206,25 +209,96 @@ export function CustomCakeForm() {
     }
   }, [tomorrowIst, previewUrl]);
 
+  // Prevent browser window from navigating away when a file is dropped outside the dropzone
+  React.useEffect(() => {
+    const handleWindowDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    const handleWindowDrop = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("dragover", handleWindowDragOver);
+    window.addEventListener("drop", handleWindowDrop);
+    return () => {
+      window.removeEventListener("dragover", handleWindowDragOver);
+      window.removeEventListener("drop", handleWindowDrop);
+    };
+  }, []);
+
+  const processSelectedFile = React.useCallback(
+    (file: File) => {
+      // Validate file size (max 5 MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setFileError("Reference photo must be under 5MB in size.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return false;
+      }
+
+      // Check empty file
+      if (file.size === 0) {
+        setFileError("The selected image file is empty. Please choose a valid photo.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return false;
+      }
+
+      // Validate file MIME type and extension: JPEG, PNG, WebP
+      const fileName = file.name.toLowerCase();
+      const hasValidExt = /\.(jpe?g|png|webp)$/i.test(fileName);
+      const hasValidMime = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/pjpeg",
+        "image/jfif",
+        "image/x-png",
+      ].includes(file.type);
+
+      if (!hasValidMime && !hasValidExt) {
+        setFileError("Only PNG, JPEG, and WebP image formats are accepted.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return false;
+      }
+
+      // Normalize MIME type to standard canonical image/jpeg, image/png, or image/webp
+      let normalizedFile = file;
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        const inferredType = fileName.endsWith(".png")
+          ? "image/png"
+          : fileName.endsWith(".webp")
+            ? "image/webp"
+            : "image/jpeg";
+        normalizedFile = new File([file], file.name, { type: inferredType });
+      }
+
+      // Synchronize file into native file input so DOM and state stay aligned
+      if (fileInputRef.current && typeof DataTransfer !== "undefined") {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(normalizedFile);
+          fileInputRef.current.files = dt.files;
+        } catch {
+          // Ignore if browser restricts programmatic FileList assignment
+        }
+      }
+
+      setFileError(null);
+      setReferenceFile(normalizedFile);
+
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      const objectUrl = URL.createObjectURL(normalizedFile);
+      setPreviewUrl(objectUrl);
+      return true;
+    },
+    [previewUrl]
+  );
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      setFileError("Reference photo must be under 5MB in size.");
-      return;
-    }
-
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      setFileError("Only PNG, JPEG, and WebP image formats are accepted.");
-      return;
-    }
-
-    setFileError(null);
-    setReferenceFile(file);
-
-    const objectUrl = URL.createObjectURL(file);
-    setPreviewUrl(objectUrl);
+    processSelectedFile(file);
   };
 
   const handleRemoveFile = () => {
@@ -233,6 +307,46 @@ export function CustomCakeForm() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = "copy";
+    }
+    setIsDragging(true);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = "copy";
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processSelectedFile(file);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -791,51 +905,109 @@ export function CustomCakeForm() {
 
         {/* Reference Image Upload */}
         <div className="space-y-2 pt-2">
-          <label className="block text-xs font-semibold uppercase tracking-wider text-foreground">
+          <label
+            htmlFor="reference-image-input"
+            className="block text-xs font-semibold uppercase tracking-wider text-foreground cursor-pointer"
+          >
             Reference Image / Sketch (Optional)
           </label>
 
+          {/* Hidden file input placed outside conditional branches so it stays mounted */}
+          <input
+            id="reference-image-input"
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+            onClick={(e) => {
+              // Reset input value before picker opens so selecting the same file triggers onChange
+              (e.target as HTMLInputElement).value = "";
+            }}
+            onChange={handleFileChange}
+            className="sr-only"
+            aria-label="Upload reference photo or sketch"
+          />
+
           {previewUrl ? (
-            <div className="relative inline-block rounded-sm border border-border bg-background p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewUrl}
-                alt="Cake reference preview"
-                className="size-36 object-cover rounded-xs border border-border"
-              />
-              <button
-                type="button"
-                onClick={handleRemoveFile}
-                className="absolute -top-2 -right-2 size-6 rounded-full bg-destructive text-white flex items-center justify-center shadow-xs hover:bg-destructive/90"
-                title="Remove photo"
-              >
-                <X className="size-3.5" />
-              </button>
-              <p className="text-[10px] text-muted-foreground mt-1 max-w-[140px] truncate">
-                {referenceFile?.name}
-              </p>
+            <div className="relative flex flex-col sm:flex-row items-center sm:items-start gap-4 rounded-sm border border-border bg-background p-3.5">
+              <div className="relative size-32 shrink-0 overflow-hidden rounded-xs border border-border bg-muted">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewUrl}
+                  alt="Cake reference photo preview"
+                  className="size-full object-cover"
+                />
+              </div>
+              <div className="flex flex-col justify-between flex-1 min-w-0 py-1 text-center sm:text-left">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-center sm:justify-start gap-1.5 text-xs font-medium text-foreground">
+                    <CheckCircle2 className="size-3.5 text-emerald-600 shrink-0" />
+                    <span className="truncate max-w-[220px]" title={referenceFile?.name}>
+                      {referenceFile?.name}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {referenceFile ? `${(referenceFile.size / (1024 * 1024)).toFixed(2)} MB` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center justify-center sm:justify-start gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-caramel hover:text-caramel/80 underline underline-offset-2 transition-colors cursor-pointer"
+                  >
+                    Change photo
+                  </button>
+                  <span className="text-muted-foreground text-xs">•</span>
+                  <button
+                    type="button"
+                    onClick={handleRemoveFile}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-destructive hover:text-destructive/80 transition-colors cursor-pointer"
+                    aria-label="Remove reference photo"
+                  >
+                    <X className="size-3.5" />
+                    Remove
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <div
+              role="button"
+              tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
-              className="cursor-pointer rounded-sm border-2 border-dashed border-border p-6 text-center hover:border-caramel/60 hover:bg-surface transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              aria-label="Upload reference photo or sketch"
+              className={cn(
+                "group relative flex flex-col items-center justify-center cursor-pointer rounded-sm border-2 border-dashed p-6 text-center transition-all focus:outline-hidden focus:ring-2 focus:ring-caramel/50 focus:ring-offset-2",
+                isDragging
+                  ? "border-caramel bg-caramel/10 scale-[1.01]"
+                  : "border-border hover:border-caramel/60 hover:bg-surface"
+              )}
             >
-              <UploadCloud className="size-8 text-caramel/70 mx-auto mb-2" />
-              <p className="text-xs font-semibold text-foreground">
-                Click to upload a reference photo or sketch
+              <UploadCloud
+                className={cn(
+                  "size-8 mb-2 transition-colors pointer-events-none",
+                  isDragging ? "text-caramel" : "text-caramel/70 group-hover:text-caramel"
+                )}
+              />
+              <p className="text-xs font-semibold text-foreground pointer-events-none">
+                {isDragging ? "Drop your photo here" : "Click to upload or drag & drop reference photo"}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
+              <p className="text-[11px] text-muted-foreground mt-0.5 pointer-events-none">
                 PNG, JPEG, or WebP up to 5MB
               </p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={handleFileChange}
-                className="hidden"
-              />
             </div>
           )}
+
           {fileError && (
             <div
               role="alert"

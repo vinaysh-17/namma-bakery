@@ -99,6 +99,28 @@ export async function submitCustomCakeRequestAction(
     return { success: false, error: imageValidation.error };
   }
 
+  // Pre-validate binary magic bytes before any database interaction to reject spoofed or corrupted files early
+  let imageBuffer: Buffer | null = null;
+  if (imageFile && imageFile.size > 0) {
+    try {
+      const fileBytes = await imageFile.arrayBuffer();
+      imageBuffer = Buffer.from(fileBytes);
+      if (!validateImageMagicBytes(imageBuffer)) {
+        return {
+          success: false,
+          error:
+            "The uploaded reference image is invalid or corrupted. Please upload a valid PNG, JPEG, or WebP photo.",
+        };
+      }
+    } catch (readErr) {
+      console.error("[submitCustomCakeRequestAction] Failed to read reference image buffer:", readErr);
+      return {
+        success: false,
+        error: "Failed to read the reference photo. Please choose the file again.",
+      };
+    }
+  }
+
   try {
     const supabase = createAdminClient();
 
@@ -212,40 +234,170 @@ export async function submitCustomCakeRequestAction(
     const publicToken = created.public_token as string;
 
     // 8. Upload reference image if attached
-    if (imageFile && imageFile.size > 0) {
+    if (imageFile && imageFile.size > 0 && imageBuffer) {
+      let storagePath: string | null = null;
+
       try {
-        const fileBytes = await imageFile.arrayBuffer();
-        const buffer = Buffer.from(fileBytes);
+        const ext =
+          imageFile.type === "image/png"
+            ? "png"
+            : imageFile.type === "image/webp"
+              ? "webp"
+              : "jpg";
+        storagePath = `requests/${requestId}/${crypto.randomUUID()}.${ext}`;
 
-        // Verify magic bytes header
-        if (!validateImageMagicBytes(buffer)) {
-          console.warn("[submitCustomCakeRequestAction] Image upload rejected: invalid file signature.");
-        } else {
-          const ext = imageFile.type === "image/png" ? "png" : imageFile.type === "image/webp" ? "webp" : "jpg";
-          const storagePath = `requests/${requestId}/${crypto.randomUUID()}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from("cake-references")
+          .upload(storagePath, imageBuffer, {
+            contentType: imageFile.type,
+            upsert: false,
+          });
 
-          const { error: uploadError } = await supabase.storage
-            .from("cake-references")
-            .upload(storagePath, buffer, {
-              contentType: imageFile.type,
-              upsert: false,
-            });
+        if (uploadError) {
+          console.error(
+            "[submitCustomCakeRequestAction] Image upload failed:",
+            uploadError.message
+          );
+          throw new Error(`UPLOAD_FAILED: ${uploadError.message}`);
+        }
 
-          if (uploadError) {
-            console.error("[submitCustomCakeRequestAction] Image upload failed:", uploadError.message);
-          } else {
-            // Record image reference in custom_cake_images table
-            await supabase.from("custom_cake_images").insert({
-              request_id: requestId,
-              storage_path: storagePath,
-              mime_type: imageFile.type,
-              size_bytes: imageFile.size,
-            });
-          }
+        // Record image reference in custom_cake_images table
+        const { error: insertError } = await supabase
+          .from("custom_cake_images")
+          .insert({
+            request_id: requestId,
+            storage_path: storagePath,
+            mime_type: imageFile.type,
+            size_bytes: imageFile.size,
+          });
+
+        if (insertError) {
+          console.error(
+            "[submitCustomCakeRequestAction] Image record insert failed:",
+            insertError.message
+          );
+          throw new Error(`DB_INSERT_FAILED: ${insertError.message}`);
         }
       } catch (imgErr) {
-        console.error("[submitCustomCakeRequestAction] Image handling error:", imgErr);
-        // Do not fail the whole enquiry if only the image upload errored
+        console.error(
+          "[submitCustomCakeRequestAction] Reference photo processing failed; executing rollback:",
+          imgErr
+        );
+
+        // Rollback 1: Storage removal
+        // Even if upload failed or timed out, the file may have been saved before the network dropped.
+        // Attempt removal whenever storagePath was generated.
+        // Wrapped in try/catch so a Storage exception never prevents database enquiry cleanup.
+        let storageCleanupStatus: "cleaned" | "failed" | "uncertain" | "not_attempted" = "not_attempted";
+        if (storagePath) {
+          try {
+            const { error: storageRemoveError } = await supabase.storage
+              .from("cake-references")
+              .remove([storagePath]);
+
+            if (storageRemoveError) {
+              storageCleanupStatus = "failed";
+              console.error(
+                "[submitCustomCakeRequestAction] Rollback warning: storage file cleanup failed:",
+                {
+                  bucket: "cake-references",
+                  storagePath,
+                  requestId,
+                  error: storageRemoveError.message,
+                }
+              );
+            } else {
+              storageCleanupStatus = "cleaned";
+              console.info(
+                "[submitCustomCakeRequestAction] Rollback: storage file removed successfully:",
+                { bucket: "cake-references", storagePath, requestId }
+              );
+            }
+          } catch (storageErr) {
+            storageCleanupStatus = "uncertain";
+            console.error(
+              "[submitCustomCakeRequestAction] Rollback exception: storage file removal threw an error:",
+              {
+                bucket: "cake-references",
+                storagePath,
+                requestId,
+                error: storageErr instanceof Error ? storageErr.message : String(storageErr),
+              }
+            );
+          }
+        }
+
+        // Rollback 2: Database enquiry deletion
+        // Verify with .select("id") that the expected requestId was actually removed.
+        // Wrapped in try/catch to handle returned errors, zero affected rows, and thrown exceptions.
+        let dbCleanupStatus: "deleted" | "failed" | "zero_rows" | "uncertain" = "uncertain";
+        try {
+          const { data: deletedRows, error: dbDeleteError } = await supabase
+            .from("custom_cake_requests")
+            .delete()
+            .eq("id", requestId)
+            .select("id");
+
+          if (dbDeleteError) {
+            dbCleanupStatus = "failed";
+            console.error(
+              "[submitCustomCakeRequestAction] Rollback critical: database enquiry cleanup failed:",
+              { requestId, error: dbDeleteError.message }
+            );
+          } else if (!deletedRows || deletedRows.length === 0) {
+            dbCleanupStatus = "zero_rows";
+            console.warn(
+              "[submitCustomCakeRequestAction] Rollback warning: zero rows deleted for enquiry (possible concurrent delete or uncommitted row):",
+              { requestId }
+            );
+          } else if (deletedRows.some((row) => row.id === requestId)) {
+            dbCleanupStatus = "deleted";
+            console.info(
+              "[submitCustomCakeRequestAction] Rollback: database enquiry deleted successfully:",
+              { requestId }
+            );
+          } else {
+            dbCleanupStatus = "uncertain";
+            console.warn(
+              "[submitCustomCakeRequestAction] Rollback warning: unexpected deleted row response:",
+              { requestId, deletedRows }
+            );
+          }
+        } catch (dbErr) {
+          dbCleanupStatus = "uncertain";
+          console.error(
+            "[submitCustomCakeRequestAction] Rollback exception: database enquiry cleanup threw an error:",
+            {
+              requestId,
+              error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+            }
+          );
+        }
+
+        // Overall rollback audit log: Never claim complete success if any part failed or is uncertain
+        if (storageCleanupStatus === "cleaned" && dbCleanupStatus === "deleted") {
+          console.info(
+            "[submitCustomCakeRequestAction] Rollback complete: all resources cleanly removed for enquiry:",
+            { requestId, storagePath }
+          );
+        } else {
+          console.error(
+            "[submitCustomCakeRequestAction] Rollback incomplete: manual audit required for enquiry:",
+            {
+              requestId,
+              bucket: "cake-references",
+              storagePath,
+              storageCleanupStatus,
+              dbCleanupStatus,
+            }
+          );
+        }
+
+        return {
+          success: false,
+          error:
+            "Failed to save reference photo. Please check your image file and try again.",
+        };
       }
     }
 

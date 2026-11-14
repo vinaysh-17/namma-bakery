@@ -1972,6 +1972,166 @@ assert(
   "Notes DB #72: the seed writes notes to the notes table (a local reset still works after the columns are dropped)"
 );
 
+// --- Custom Cake Reference Photo Upload Atomicity & Safe Rollback (GitHub issue #82) ---
+// NOTE: Static source contracts verify that all failure handling, compensation,
+// and isolation branches are present and properly sequenced in application code.
+// They complement, but do not replace, live network failure-injection and fault tests.
+console.log("\n--- Custom Cake Reference Photo Upload Atomicity & Safe Rollback (#82) ---");
+const customCakeActionsSrc82 = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/actions.ts"), "utf8");
+
+// 1. Binary magic bytes pre-validation before database interaction
+const magicBytesIdx82 = customCakeActionsSrc82.indexOf("validateImageMagicBytes(imageBuffer)");
+const rpcIdx82 = customCakeActionsSrc82.indexOf("supabase.rpc(");
+assert(
+  magicBytesIdx82 >= 0 && rpcIdx82 >= 0 && magicBytesIdx82 < rpcIdx82,
+  "Custom Cake Photo #82: magic bytes are validated before submit_custom_request is invoked"
+);
+assert(
+  !customCakeActionsSrc82.includes("Image upload rejected: invalid file signature"),
+  "Custom Cake Photo #82: invalid file signatures are not silently swallowed with a console warning"
+);
+assert(
+  /if \(!validateImageMagicBytes\(imageBuffer\)\) \{\s*return \{\s*success: false,/.test(customCakeActionsSrc82),
+  "Custom Cake Photo #82: invalid magic bytes immediately return an explicit failure to the customer"
+);
+
+// 2. Explicit inspection of Storage upload error and database insert error
+assert(
+  /if \(uploadError\) \{[\s\S]*?throw new Error\(/.test(customCakeActionsSrc82),
+  "Custom Cake Photo #82: storage upload errors throw an explicit error instead of silently returning success"
+);
+assert(
+  customCakeActionsSrc82.includes('const { error: insertError } = await supabase') &&
+    customCakeActionsSrc82.includes('.from("custom_cake_images")') &&
+    customCakeActionsSrc82.includes('.insert({') &&
+    /if \(insertError\) \{[\s\S]*?throw new Error\(/.test(customCakeActionsSrc82),
+  "Custom Cake Photo #82: custom_cake_images insert errors are explicitly captured and thrown"
+);
+
+// 3. Compensation and rollback on image handling failure
+assert(
+  !customCakeActionsSrc82.includes("Do not fail the whole enquiry if only the image upload errored"),
+  "Custom Cake Photo #82: old error-swallowing pattern ('Do not fail the whole enquiry') is completely removed"
+);
+
+// 4. Storage cleanup attempts removal whenever storagePath was generated (even on uncertain upload outcome)
+assert(
+  !customCakeActionsSrc82.includes("uploadSucceeded && storagePath") &&
+    customCakeActionsSrc82.includes('if (storagePath) {') &&
+    customCakeActionsSrc82.includes('await supabase.storage') &&
+    customCakeActionsSrc82.includes('.from("cake-references")') &&
+    customCakeActionsSrc82.includes('.remove([storagePath]);'),
+  "Custom Cake Photo #82: storage removal is attempted whenever storagePath exists, even on uncertain upload outcomes"
+);
+assert(
+  customCakeActionsSrc82.includes('let storageCleanupStatus: "cleaned" | "failed" | "uncertain" | "not_attempted"') &&
+    customCakeActionsSrc82.includes('storageCleanupStatus = "failed"') &&
+    customCakeActionsSrc82.includes('storageCleanupStatus = "cleaned"') &&
+    customCakeActionsSrc82.includes('storageCleanupStatus = "uncertain"'),
+  "Custom Cake Photo #82: storage removal result distinguishes cleaned, failed, and uncertain outcomes"
+);
+
+// 5. Database deletion verification with .select("id") and zero affected rows check
+assert(
+  customCakeActionsSrc82.includes('.from("custom_cake_requests")') &&
+    customCakeActionsSrc82.includes('.delete()') &&
+    customCakeActionsSrc82.includes('.eq("id", requestId)') &&
+    customCakeActionsSrc82.includes('.select("id");'),
+  "Custom Cake Photo #82: database enquiry deletion explicitly requests deleted id via .select('id')"
+);
+assert(
+  customCakeActionsSrc82.includes("!deletedRows || deletedRows.length === 0") &&
+    customCakeActionsSrc82.includes('dbCleanupStatus = "zero_rows"'),
+  "Custom Cake Photo #82: zero affected rows on deletion is explicitly detected and marked as a warning"
+);
+assert(
+  customCakeActionsSrc82.includes("deletedRows.some((row) => row.id === requestId)") &&
+    customCakeActionsSrc82.includes('dbCleanupStatus = "deleted"'),
+  "Custom Cake Photo #82: deleted rows are verified to match the target requestId"
+);
+
+// 6. Logging of cleanup failures and audit requirement
+assert(
+  customCakeActionsSrc82.includes('bucket: "cake-references"') &&
+    customCakeActionsSrc82.includes("storagePath") &&
+    customCakeActionsSrc82.includes("requestId") &&
+    customCakeActionsSrc82.includes("Rollback incomplete: manual audit required for enquiry:"),
+  "Custom Cake Photo #82: cleanup failures log bucket, path, requestId, and details for manual recovery"
+);
+assert(
+  customCakeActionsSrc82.includes('if (storageCleanupStatus === "cleaned" && dbCleanupStatus === "deleted")'),
+  "Custom Cake Photo #82: rollback is reported complete only when both storage and database cleanup succeed"
+);
+
+// 7. Independent try/catch protection for storage removal and database deletion with uncertain exception status
+const storageCleanupSectionIdx82 = customCakeActionsSrc82.indexOf("Rollback 1: Storage removal");
+const storageCatchIdx82 = customCakeActionsSrc82.indexOf("catch (storageErr)");
+const dbCleanupSectionIdx82 = customCakeActionsSrc82.indexOf("Rollback 2: Database enquiry deletion");
+const dbCatchIdx82 = customCakeActionsSrc82.indexOf("catch (dbErr)");
+
+assert(
+  storageCleanupSectionIdx82 >= 0 &&
+    storageCatchIdx82 >= 0 &&
+    storageCleanupSectionIdx82 < storageCatchIdx82 &&
+    customCakeActionsSrc82.includes("Rollback exception: storage file removal threw an error:") &&
+    customCakeActionsSrc82.includes('storageCleanupStatus = "uncertain"'),
+  "Custom Cake Photo #82: storage removal exception marks status as uncertain rather than definitive failure"
+);
+assert(
+  dbCleanupSectionIdx82 >= 0 &&
+    dbCatchIdx82 >= 0 &&
+    dbCleanupSectionIdx82 < dbCatchIdx82 &&
+    customCakeActionsSrc82.includes("Rollback exception: database enquiry cleanup threw an error:") &&
+    customCakeActionsSrc82.includes('dbCleanupStatus = "uncertain"'),
+  "Custom Cake Photo #82: database enquiry deletion exception marks status as uncertain rather than definitive failure"
+);
+assert(
+  storageCatchIdx82 >= 0 &&
+    dbCleanupSectionIdx82 >= 0 &&
+    storageCatchIdx82 < dbCleanupSectionIdx82,
+  "Custom Cake Photo #82: storage removal exception does not bypass database deletion (independent sequential try/catch blocks)"
+);
+
+// 8. Staff notification sequencing
+const notifyIdx82 = customCakeActionsSrc82.indexOf("await notifyStaffChanged();");
+const insertErrorIdx82 = customCakeActionsSrc82.indexOf("insertError");
+assert(
+  notifyIdx82 >= 0 && insertErrorIdx82 >= 0 && notifyIdx82 > insertErrorIdx82,
+  "Custom Cake Photo #82: staff is notified only after complete image upload and record creation"
+);
+
+// 9. UI upload accessibility, drag-and-drop & preview controls (#82 UI)
+assert(
+  customCakeFormSrc.includes('htmlFor="reference-image-input"') &&
+    customCakeFormSrc.includes('id="reference-image-input"') &&
+    customCakeFormSrc.includes('aria-label="Upload reference photo or sketch"'),
+  "Custom Cake Photo UI #82: upload area connects accessible label directly to file input"
+);
+assert(
+  customCakeFormSrc.includes('onDragEnter={handleDragEnter}') &&
+    customCakeFormSrc.includes('onDragOver={handleDragOver}') &&
+    customCakeFormSrc.includes('onDragLeave={handleDragLeave}') &&
+    customCakeFormSrc.includes('onDrop={handleDrop}'),
+  "Custom Cake Photo UI #82: upload area handles drag-and-drop events"
+);
+assert(
+  customCakeFormSrc.includes('window.addEventListener("dragover", handleWindowDragOver)') &&
+    customCakeFormSrc.includes('window.addEventListener("drop", handleWindowDrop)'),
+  "Custom Cake Photo UI #82: browser window drop navigation is prevented to protect form data"
+);
+assert(
+  customCakeFormSrc.includes('role="button"') &&
+    customCakeFormSrc.includes('tabIndex={0}') &&
+    customCakeFormSrc.includes('e.key === "Enter" || e.key === " "'),
+  "Custom Cake Photo UI #82: upload area is keyboard focusable and responds to Enter and Space"
+);
+assert(
+  customCakeFormSrc.includes('Change photo') &&
+    customCakeFormSrc.includes('Remove') &&
+    customCakeFormSrc.includes('aria-label="Remove reference photo"'),
+  "Custom Cake Photo UI #82: preview provides explicit change and remove controls"
+);
+
 console.log("\n========================================================");
 console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("========================================================\n");
