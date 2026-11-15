@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { ArrowLeft, Calendar, Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
-import { useCart } from "@/lib/cart/context";
+import { MAX_QUANTITY_PER_ITEM, useCart } from "@/lib/cart/context";
 import { formatPaise } from "@/lib/utils/money";
 import {
   formatCakeFinish,
@@ -207,9 +207,10 @@ export function CartView() {
                           </span>
                           <button
                             type="button"
+                            disabled={item.quantity >= MAX_QUANTITY_PER_ITEM}
                             onClick={() => incrementQuantity(item.itemKey)}
                             aria-label={`Increase quantity of ${item.productName}`}
-                            className="flex min-touch-target h-12 w-12 items-center justify-center text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                            className="flex min-touch-target h-12 w-12 items-center justify-center text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:text-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
                           >
                             <Plus className="h-4 w-4" aria-hidden="true" />
                           </button>

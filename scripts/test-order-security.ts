@@ -70,6 +70,12 @@ import { getSlotBadgeLabel } from "../lib/pickup/utils";
 import { mapCartRpcError, extractProductName } from "../lib/orders/cart-errors";
 import { deriveCartIssues } from "../lib/cart/cart-issues";
 import type { CartItem } from "../lib/cart/types";
+import {
+  MAX_QUANTITY_PER_ITEM,
+  cartReducer,
+  initialCartState,
+  validateCartItems,
+} from "../lib/cart/reducer";
 import type { CartItemCheck } from "../lib/orders/types";
 import { validateCartInputSchema } from "../lib/orders/validation";
 import {
@@ -1686,6 +1692,11 @@ assert(/45 minutes of preparation/.test(describeInvalidSlot("LEAD_TIME_NOT_MET",
 // Wiring (static): the server decides, the client only reacts
 const pickupActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/pickup/actions.ts"), "utf8");
 const cartContextSrc = fs.readFileSync(path.join(process.cwd(), "lib/cart/context.tsx"), "utf8");
+// The reducer itself (INVALIDATE_PICKUP_SLOT, SET_PICKUP_SLOT cases) was extracted out of
+// context.tsx into its own dependency-free module (lib/cart/reducer.ts) as part of Batch 1
+// (#96), specifically so it could be unit-tested directly instead of only via source-string
+// assertions. The two checks below moved to that file accordingly.
+const cartReducerSrc = fs.readFileSync(path.join(process.cwd(), "lib/cart/reducer.ts"), "utf8");
 assert(
   /\.strict\(\)/.test(pickupActionsSrc) && !/lead/i.test(pickupActionsSrc.slice(pickupActionsSrc.indexOf("validatePickupSlotSchema"), pickupActionsSrc.indexOf("export type ValidatePickupSlotResult"))),
   "Slot #76: the slot check accepts only product ids and a slot start: a client-supplied lead time or availability is impossible"
@@ -1700,12 +1711,12 @@ assert(
     /\[isHydrated, leadSignature, selectedSlotStart\]/.test(cartContextSrc),
   "Slot #76: the cart re-checks the slot when its products change or a stored slot is restored"
 );
-const reducerInvalidate = cartContextSrc.slice(cartContextSrc.indexOf('case "INVALIDATE_PICKUP_SLOT"'), cartContextSrc.indexOf('case "CLEAR_PICKUP"'));
+const reducerInvalidate = cartReducerSrc.slice(cartReducerSrc.indexOf('case "INVALIDATE_PICKUP_SLOT"'), cartReducerSrc.indexOf('case "CLEAR_PICKUP"'));
 assert(
   /pickupSlot: null/.test(reducerInvalidate) && !/pickupDate/.test(reducerInvalidate.replace(/\/\/.*$/gm, "")),
   "Slot #76: an invalid slot is cleared but the chosen date is kept, and no other slot is picked for the customer"
 );
-assert(/pickupSlotNotice: action\.payload \? null : state\.pickupSlotNotice/.test(cartContextSrc), "Slot #76: choosing a new slot clears the notice");
+assert(/pickupSlotNotice: action\.payload \? null : state\.pickupSlotNotice/.test(cartReducerSrc), "Slot #76: choosing a new slot clears the notice");
 assert(
   /isRetryOfUnconfirmedAttempt/.test(checkoutSrc) && /if \(!isRetryOfUnconfirmedAttempt\) \{[\s\S]*?validatePickupSlotAction\(/.test(checkoutSrc),
   "Slot #76: checkout checks the pickup time before placing the order, but not for a retry of an unconfirmed attempt (idempotent replay stays intact)"
@@ -3096,6 +3107,98 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
       cartContextSrc76.includes("getLeadSignature(state.items)") &&
       cartContextSrc76.includes("INVALIDATE_PICKUP_SLOT"),
     "Issue #76: the cart's slot-revalidation effect is unchanged by this implementation cycle"
+  );
+
+  // --- 21. Batch 1: Cart Quantity Cannot Exceed The Per-Item Limit (#96) ---
+  console.log("\n--- 21. Batch 1: Cart Quantity Cannot Exceed The Per-Item Limit (#96) ---");
+
+  function makeCartItem(overrides: Partial<CartItem> = {}): CartItem {
+    return {
+      itemKey: "simple:prod-1:default",
+      productId: "prod-1",
+      productSlug: "vanilla",
+      productName: "Vanilla Cupcake",
+      categorySlug: "cupcakes",
+      kind: "SIMPLE",
+      unitPricePaise: 5000,
+      quantity: 1,
+      ...overrides,
+    };
+  }
+
+  assert(MAX_QUANTITY_PER_ITEM === 20, "Cart #96: the client cap matches the database's check (quantity between 1 and 20)");
+
+  // ADD_ITEM: adding to an item already at/near the cap clamps instead of overflowing
+  const stateNearCap = { ...initialCartState, items: [makeCartItem({ quantity: 18 })] };
+  const afterAddBig = cartReducer(stateNearCap, {
+    type: "ADD_ITEM",
+    payload: makeCartItem({ quantity: 10 }),
+  });
+  assert(
+    afterAddBig.items[0].quantity === 20,
+    "Cart #96: ADD_ITEM merging into an existing line clamps to 20, not 28"
+  );
+
+  // ADD_ITEM: a single add of more than 20 (e.g. a corrupted/forged payload) is also clamped
+  const afterAddFresh = cartReducer(initialCartState, {
+    type: "ADD_ITEM",
+    payload: makeCartItem({ quantity: 50 }),
+  });
+  assert(
+    afterAddFresh.items[0].quantity === 20,
+    "Cart #96: ADD_ITEM for a brand-new line also clamps an oversized quantity to 20"
+  );
+
+  // INCREMENT_QUANTITY: clicking '+' at the cap is a no-op, never 21
+  const stateAtCap = { ...initialCartState, items: [makeCartItem({ quantity: 20 })] };
+  const afterIncrementAtCap = cartReducer(stateAtCap, {
+    type: "INCREMENT_QUANTITY",
+    payload: { itemKey: "simple:prod-1:default" },
+  });
+  assert(
+    afterIncrementAtCap.items[0].quantity === 20,
+    "Cart #96: INCREMENT_QUANTITY at the cap stays at 20, never reaches 21"
+  );
+
+  // UPDATE_QUANTITY: a direct/typed-in update above the cap is clamped, not rejected outright
+  const afterUpdateOver = cartReducer(
+    { ...initialCartState, items: [makeCartItem({ quantity: 5 })] },
+    { type: "UPDATE_QUANTITY", payload: { itemKey: "simple:prod-1:default", quantity: 999 } }
+  );
+  assert(
+    afterUpdateOver.items[0].quantity === 20,
+    "Cart #96: UPDATE_QUANTITY above the cap clamps to 20"
+  );
+
+  // DECREMENT_QUANTITY is untouched by this fix (still floors at 1, never removes via decrement)
+  const afterDecrementAtOne = cartReducer(
+    { ...initialCartState, items: [makeCartItem({ quantity: 1 })] },
+    { type: "DECREMENT_QUANTITY", payload: { itemKey: "simple:prod-1:default" } }
+  );
+  assert(
+    afterDecrementAtOne.items[0].quantity === 1,
+    "Cart #96: DECREMENT_QUANTITY still floors at 1 (unrelated to the upper cap, confirms no regression)"
+  );
+
+  // A cart persisted before this fix existed (quantity 37) is clamped on rehydration, not
+  // dropped and not left over-the-limit.
+  const rehydrated = validateCartItems([
+    { ...makeCartItem({ quantity: 37 }) },
+    { ...makeCartItem({ itemKey: "simple:prod-2:default", productId: "prod-2", quantity: 3 }) },
+  ]);
+  assert(
+    rehydrated.length === 2 &&
+      rehydrated[0].quantity === 20 &&
+      rehydrated[1].quantity === 3,
+    "Cart #96: rehydrating a pre-existing localStorage cart clamps an old over-limit quantity instead of dropping the item"
+  );
+
+  // Static check: the UI's '+' button is disabled at the cap (behavioral coverage above
+  // proves the underlying state can't exceed it; this confirms the control reflects that).
+  const cartViewSrc96 = fs.readFileSync(path.join(process.cwd(), "components/cart/cart-view.tsx"), "utf8");
+  assert(
+    cartViewSrc96.includes("disabled={item.quantity >= MAX_QUANTITY_PER_ITEM}"),
+    "Cart #96: the cart page's '+' button is disabled once a line reaches the cap"
   );
 
   console.log("\n========================================================");
