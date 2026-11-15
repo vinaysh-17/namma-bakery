@@ -21,6 +21,7 @@ import {
   createStaffMemberAction,
   updateStaffMemberAction,
   deleteStaffMemberAction,
+  updateStaffRoleAction,
 } from "@/lib/admin/actions";
 
 interface AdminStaffViewProps {
@@ -46,7 +47,13 @@ export function AdminStaffView({
   const [addPassword, setAddPassword] = React.useState("");
   const [addPhone, setAddPhone] = React.useState("");
   const [addRole, setAddRole] = React.useState<StaffOrganizationalRole | "">("");
+  const [addIsAdmin, setAddIsAdmin] = React.useState(false);
   const [showAddPassword, setShowAddPassword] = React.useState(false);
+
+  // user_id of a role-change (promote/demote/reactivate) currently in flight, so only
+  // that row's button shows a spinner and the rest of the table stays interactive.
+  const [roleChangeUserId, setRoleChangeUserId] = React.useState<string | null>(null);
+  const [roleChangeError, setRoleChangeError] = React.useState<string | null>(null);
 
   // Form states - Edit
   const [editName, setEditName] = React.useState("");
@@ -66,6 +73,7 @@ export function AdminStaffView({
     setAddPassword("");
     setAddPhone("");
     setAddRole("");
+    setAddIsAdmin(false);
     setShowAddPassword(false);
     setErrorMessage(null);
     setIsAddOpen(true);
@@ -119,6 +127,7 @@ export function AdminStaffView({
       password: addPassword,
       phone: addPhone.trim() || null,
       role: addRole || null,
+      is_admin: addIsAdmin,
     });
     setIsSubmitting(false);
 
@@ -195,6 +204,33 @@ export function AdminStaffView({
     onActionSuccess();
   };
 
+  // Promote/demote (GitHub #70) and reactivate (GitHub #69) share one action:
+  // updateStaffRoleAction, which itself calls the atomic update_staff_role RPC. The
+  // server re-verifies admin privileges and the last-active-admin protection itself,
+  // so this is never trusted as the only authorization check.
+  const handleRoleChange = async (
+    member: AdminStaffMember,
+    next: { role: "EMPLOYEE" | "ADMIN"; is_active: boolean }
+  ) => {
+    setRoleChangeError(null);
+    setRoleChangeUserId(member.user_id);
+
+    const res = await updateStaffRoleAction({
+      user_id: member.user_id,
+      role: next.role,
+      is_active: next.is_active,
+    });
+
+    setRoleChangeUserId(null);
+
+    if (!res.success) {
+      setRoleChangeError(res.error || "Unable to update this staff member's role.");
+      return;
+    }
+
+    onActionSuccess();
+  };
+
   return (
     <div className="space-y-4">
       {/* Top action bar */}
@@ -219,6 +255,16 @@ export function AdminStaffView({
         </div>
       </div>
 
+      {roleChangeError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 p-2.5 rounded text-xs bg-destructive/10 text-destructive border border-destructive/20"
+        >
+          <AlertCircle className="size-4 shrink-0" />
+          <span>{roleChangeError}</span>
+        </div>
+      )}
+
       {/* Staff directory table */}
       <div className="rounded-sm border border-border bg-card overflow-hidden">
         <div className="overflow-x-auto">
@@ -235,7 +281,7 @@ export function AdminStaffView({
               {staff.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="py-8 text-center text-muted-foreground">
-                    No active staff members found. Click &quot;Add Staff&quot; to create one.
+                    No staff members found. Click &quot;Add Staff&quot; to create one.
                   </td>
                 </tr>
               ) : (
@@ -245,11 +291,14 @@ export function AdminStaffView({
                     member.role === "ADMIN"
                       ? "Admin"
                       : member.organizational_role || "Staff";
+                  const isChangingThisRow = roleChangeUserId === member.user_id;
 
                   return (
                     <tr
                       key={member.user_id}
-                      className="hover:bg-muted/20 transition-colors"
+                      className={`hover:bg-muted/20 transition-colors ${
+                        !member.is_active ? "opacity-60" : ""
+                      }`}
                     >
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-2.5">
@@ -272,6 +321,11 @@ export function AdminStaffView({
                               {isSelf && (
                                 <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-caramel/15 text-caramel">
                                   You
+                                </span>
+                              )}
+                              {!member.is_active && (
+                                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-muted text-muted-foreground border border-border">
+                                  Inactive
                                 </span>
                               )}
                             </div>
@@ -307,24 +361,85 @@ export function AdminStaffView({
                       </td>
 
                       <td className="py-2.5 px-3 text-right">
-                        <div className="inline-flex items-center gap-1.5">
+                        <div className="inline-flex items-center gap-1.5 flex-wrap justify-end">
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(member)}
-                            className="h-7 px-2.5 rounded border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors flex items-center gap-1 cursor-pointer"
+                            disabled={isChangingThisRow}
+                            className="h-7 px-2.5 rounded border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Pencil className="size-3 text-muted-foreground" />
                             <span>Edit</span>
                           </button>
-                          {!isSelf && (
+
+                          {member.is_active ? (
+                            <>
+                              {/* Promote/demote (#70): an admin can promote or demote other staff members.
+                                  Admins are strictly prohibited from modifying their own role or active status;
+                                  this is enforced authoritatively on the server and at the database level. */}
+                              {!isSelf ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleRoleChange(member, {
+                                      role: member.role === "ADMIN" ? "EMPLOYEE" : "ADMIN",
+                                      is_active: true,
+                                    })
+                                  }
+                                  disabled={isChangingThisRow}
+                                  className="h-7 px-2.5 rounded border border-amber-300 bg-background text-xs font-semibold text-amber-900 hover:bg-amber-100 dark:text-amber-300 dark:border-amber-700 dark:hover:bg-amber-950 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title={
+                                    member.role === "ADMIN"
+                                      ? `Demote ${member.full_name || "this staff member"} to Employee`
+                                      : `Promote ${member.full_name || "this staff member"} to Admin`
+                                  }
+                                >
+                                  {isChangingThisRow ? (
+                                    <RotateCcw className="size-3 animate-spin" />
+                                  ) : (
+                                    <ShieldCheck className="size-3" />
+                                  )}
+                                  <span>{member.role === "ADMIN" ? "Demote" : "Promote"}</span>
+                                </button>
+                              ) : (
+                                <span
+                                  className="text-[11px] text-muted-foreground/60 italic px-1 cursor-default select-none"
+                                  title="Administrators cannot modify their own administrative role or status."
+                                >
+                                  Current user
+                                </span>
+                              )}
+                              {!isSelf && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDelete(member)}
+                                  disabled={isChangingThisRow}
+                                  className="h-7 px-2.5 rounded border border-destructive/30 bg-background text-xs font-semibold text-destructive hover:bg-destructive hover:text-white transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title={`Remove ${member.full_name || "staff member"}`}
+                                >
+                                  <Trash2 className="size-3" />
+                                  <span>Remove</span>
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            // Reactivate (#69): restores is_active without changing the
+                            // role that was in place when they were removed.
                             <button
                               type="button"
-                              onClick={() => handleOpenDelete(member)}
-                              className="h-7 px-2.5 rounded border border-destructive/30 bg-background text-xs font-semibold text-destructive hover:bg-destructive hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
-                              title={`Delete ${member.full_name || "staff member"}`}
+                              onClick={() =>
+                                handleRoleChange(member, { role: member.role, is_active: true })
+                              }
+                              disabled={isChangingThisRow}
+                              className="h-7 px-2.5 rounded border border-emerald-300 bg-background text-xs font-semibold text-emerald-900 hover:bg-emerald-100 dark:text-emerald-300 dark:border-emerald-700 dark:hover:bg-emerald-950 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={`Reactivate ${member.full_name || "this staff member"}`}
                             >
-                              <Trash2 className="size-3" />
-                              <span>Delete</span>
+                              {isChangingThisRow ? (
+                                <RotateCcw className="size-3 animate-spin" />
+                              ) : (
+                                <RotateCcw className="size-3" />
+                              )}
+                              <span>Reactivate</span>
                             </button>
                           )}
                         </div>
@@ -458,6 +573,24 @@ export function AdminStaffView({
                   All staff roles access the kitchen queue and order management at /staff.
                 </p>
               </div>
+
+              <label className="flex items-start gap-2 rounded-sm border border-amber-200 bg-amber-50 p-2.5 dark:border-amber-800 dark:bg-amber-950/30 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={addIsAdmin}
+                  onChange={(e) => setAddIsAdmin(e.target.checked)}
+                  className="mt-0.5 cursor-pointer"
+                />
+                <span>
+                  <span className="block font-semibold text-amber-900 dark:text-amber-200">
+                    Make this account an Admin
+                  </span>
+                  <span className="block text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                    Admins can manage the catalog, store settings, and every staff
+                    member&apos;s access (including promoting or removing other admins).
+                  </span>
+                </span>
+              </label>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
                 <button

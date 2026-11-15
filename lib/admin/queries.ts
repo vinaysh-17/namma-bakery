@@ -325,10 +325,12 @@ export async function getAdminStaffMembers(): Promise<{
   try {
     const supabase = await createClient();
 
+    // Inactive (removed) staff are included deliberately (GitHub #69): the admin UI
+    // needs to see them to offer reactivation. staff_roles_admin RLS already grants
+    // admins full access regardless of is_active.
     const { data, error } = await supabase
       .from("staff_roles")
       .select("*")
-      .eq("is_active", true)
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -359,27 +361,31 @@ export async function getAdminStaffMembers(): Promise<{
       }
     }
 
-    // Retrieve emails and user metadata using admin client
-    let authMap = new Map<
+    // Retrieve emails and user metadata for exactly these staff user IDs, by ID
+    // (GitHub #89). listUsers({page:1, perPage:200}) only ever returned the first 200
+    // auth users account-wide -- every customer "Find My Orders" OTP login also
+    // creates one, so any staff member past that page showed "No email" regardless of
+    // how many staff actually exist. Fetching by ID is correct at any auth-user count
+    // and only touches the (typically small) set of staff accounts.
+    const authMap = new Map<
       string,
       { email?: string; metadata?: Record<string, unknown> }
     >();
     try {
       const adminClient = createAdminClient();
-      const { data: authData } = await adminClient.auth.admin.listUsers({
-        page: 1,
-        perPage: 200,
-      });
-      if (authData?.users) {
-        authMap = new Map(
-          authData.users.map((u) => [
-            u.id,
-            { email: u.email, metadata: u.user_metadata },
-          ])
-        );
+      const results = await Promise.all(
+        userIds.map((id) => adminClient.auth.admin.getUserById(id))
+      );
+      for (const { data, error } of results) {
+        if (!error && data?.user) {
+          authMap.set(data.user.id, {
+            email: data.user.email,
+            metadata: data.user.user_metadata,
+          });
+        }
       }
     } catch (e) {
-      console.warn("[getAdminStaffMembers] Could not fetch auth users list:", e);
+      console.warn("[getAdminStaffMembers] Could not fetch auth user details:", e);
     }
 
     const formatted: AdminStaffMember[] = (data ?? []).map((row) => {

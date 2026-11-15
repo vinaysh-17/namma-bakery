@@ -1148,34 +1148,46 @@ export async function updateStaffRoleAction(
     }
 
     const { user_id, role, is_active } = parsed.data;
+
+    // Self-modification safeguard: admins cannot promote, demote, or deactivate themselves
+    if (session.user && user_id === session.user.id) {
+      return {
+        success: false,
+        error: "Security restriction: You cannot modify your own administrative role or status.",
+      };
+    }
+
     const supabase = await createClient();
 
-    // Check self-management and last active admin safeguard
-    if (session.user && user_id === session.user.id && (role !== "ADMIN" || !is_active)) {
-      const { count } = await supabase
-        .from("staff_roles")
-        .select("*", { count: "exact", head: true })
-        .eq("role", "ADMIN")
-        .eq("is_active", true);
+    // update_staff_role (0026 & 0027) re-verifies is_admin() and rejects self-modifications
+    // (CANNOT_MODIFY_OWN_ROLE). It serializes via pg_advisory_xact_lock to eliminate
+    // check-then-act races and deadlocks, atomically protecting the last active admin.
+    const { error } = await supabase.rpc("update_staff_role", {
+      p_user_id: user_id,
+      p_role: role,
+      p_is_active: is_active,
+    });
 
-      if ((count ?? 0) <= 1) {
+    if (error) {
+      if (error.message.includes("CANNOT_MODIFY_OWN_ROLE")) {
+        return {
+          success: false,
+          error: "Security restriction: You cannot modify your own administrative role or status.",
+        };
+      }
+      if (
+        error.message.includes("LAST_ADMIN_PROTECTED") ||
+        error.message.includes("cannot remove the last active admin")
+      ) {
         return {
           success: false,
           error:
             "Safety lock: Cannot remove or demote the only active admin. Assign another active admin first.",
         };
       }
-    }
-
-    const { error } = await supabase
-      .from("staff_roles")
-      .update({
-        role,
-        is_active,
-      })
-      .eq("user_id", user_id);
-
-    if (error) {
+      if (error.message.includes("STAFF_NOT_FOUND")) {
+        return { success: false, error: "Staff member not found." };
+      }
       return { success: false, error: error.message };
     }
 
@@ -1204,7 +1216,7 @@ export async function createStaffMemberAction(
       };
     }
 
-    const { name, email, password, phone, role } = parsed.data;
+    const { name, email, password, phone, role, is_admin } = parsed.data;
     const adminClient = createAdminClient();
 
     // 1. Create authenticated user in Supabase Auth with email_confirm: true
@@ -1221,6 +1233,17 @@ export async function createStaffMemberAction(
       });
 
     if (authError || !authData.user) {
+      const errorMsg = authError?.message || "";
+      if (
+        errorMsg.toLowerCase().includes("already") &&
+        errorMsg.toLowerCase().includes("registered")
+      ) {
+        return {
+          success: false,
+          error:
+            "A staff account with this email already exists. If they were previously removed, you can reactivate them from the staff list below.",
+        };
+      }
       console.error("[createStaffMemberAction] Auth createUser error:", authError);
       return {
         success: false,
@@ -1234,7 +1257,10 @@ export async function createStaffMemberAction(
     const supabase = await createClient();
     const { error: roleError } = await supabase.from("staff_roles").insert({
       user_id: newUserId,
-      role: "EMPLOYEE",
+      // #70: "is_admin" is an explicit, deliberate opt-in on the Add Staff form --
+      // never inferred or defaulted to ADMIN -- so a new account is still EMPLOYEE
+      // unless the creating admin specifically checked the box.
+      role: is_admin ? "ADMIN" : "EMPLOYEE",
       is_active: true,
       created_by: session.user?.id || null,
     });
@@ -1374,10 +1400,11 @@ export async function removeStaffMemberAction(
 
     const supabase = await createClient();
 
-    // Safeguard: check if target is an admin and the last active admin
+    // The target's current role must be preserved (deactivation never changes it, so
+    // a later reactivation restores it automatically -- GitHub #69).
     const { data: targetRole, error: fetchError } = await supabase
       .from("staff_roles")
-      .select("role, is_active")
+      .select("role")
       .eq("user_id", user_id)
       .maybeSingle();
 
@@ -1389,28 +1416,32 @@ export async function removeStaffMemberAction(
       };
     }
 
-    if (targetRole.role === "ADMIN") {
-      const { count } = await supabase
-        .from("staff_roles")
-        .select("*", { count: "exact", head: true })
-        .eq("role", "ADMIN")
-        .eq("is_active", true);
+    // Soft deactivation preserves all historical orders and transactions.
+    // update_staff_role (0026) atomically re-checks the last-active-admin protection
+    // under row locks, closing the check-then-act race a plain SELECT-count-then-UPDATE
+    // would have (GitHub #70).
+    const { error: updateError } = await supabase.rpc("update_staff_role", {
+      p_user_id: user_id,
+      p_role: targetRole.role,
+      p_is_active: false,
+    });
 
-      if ((count ?? 0) <= 1) {
+    if (updateError) {
+      if (
+        updateError.message.includes("LAST_ADMIN_PROTECTED") ||
+        updateError.message.includes("cannot remove the last active admin")
+      ) {
         return {
           success: false,
           error: "Safety lock: You cannot remove the only active administrator account.",
         };
       }
-    }
-
-    // Soft deactivation preserves all historical orders and transactions
-    const { error: updateError } = await supabase
-      .from("staff_roles")
-      .update({ is_active: false })
-      .eq("user_id", user_id);
-
-    if (updateError) {
+      if (updateError.message.includes("CANNOT_MODIFY_OWN_ROLE")) {
+        return {
+          success: false,
+          error: "You cannot remove your own administrator account.",
+        };
+      }
       console.error("[removeStaffMemberAction] Deactivation error:", updateError);
       return {
         success: false,

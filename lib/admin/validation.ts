@@ -220,6 +220,10 @@ export const createStaffMemberSchema = z.object({
     .min(6, "Password must be at least 6 characters"),
   phone: z.string().trim().max(20, "Phone number is too long").nullable().optional(),
   role: z.enum(["Manager", "Staff", "Chef"]).nullable().optional(),
+  // Real authorization role (GitHub #70) -- distinct from the cosmetic job-title
+  // "role" field above. Defaults to false: a new account is never ADMIN unless the
+  // creating admin explicitly opts in.
+  is_admin: z.boolean().optional().default(false),
 });
 
 export type CreateStaffMemberInput = z.infer<typeof createStaffMemberSchema>;

@@ -43,6 +43,7 @@ import {
   adminPriceTierRuleSchema,
   adminStoreSettingsSchema,
   adminStaffRoleSchema,
+  createStaffMemberSchema,
 } from "../lib/admin/validation";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { createIdempotencyKey, IDEMPOTENCY_KEY_PATTERN } from "../lib/orders/idempotency";
@@ -3369,6 +3370,149 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     staffPageSrc88.includes("getStorePendingAlertMinutes()") &&
       staffPageSrc88.includes("pendingAlertMinutes={pendingAlertMinutes}"),
     "Kitchen Alert #88: the staff page fetches the threshold and passes it down to the dashboard"
+  );
+
+  // --- 24. Batch 3: Staff Identity & Role Management (#68, #69, #70, #89) ---
+  console.log("\n--- 24. Batch 3: Staff Identity & Role Management (#68, #69, #70, #89) ---");
+
+  // #70: creating a new staff member never defaults to ADMIN unless explicitly opted in.
+  assert(
+    createStaffMemberSchema.parse({
+      name: "New Hire",
+      email: "new-hire@example.com",
+      password: "secret123",
+    }).is_admin === false,
+    "Staff #70: createStaffMemberSchema defaults is_admin to false when omitted"
+  );
+  assert(
+    createStaffMemberSchema.parse({
+      name: "New Hire",
+      email: "new-hire@example.com",
+      password: "secret123",
+      is_admin: true,
+    }).is_admin === true,
+    "Staff #70: createStaffMemberSchema accepts an explicit is_admin opt-in"
+  );
+  assert(
+    !createStaffMemberSchema.safeParse({
+      name: "New Hire",
+      email: "new-hire@example.com",
+      password: "secret123",
+      is_admin: "true", // a string, not a boolean -- must not be coerced
+    }).success,
+    "Staff #70: is_admin must be a real boolean, not a truthy-looking string"
+  );
+
+  const adminActionsSrc3 = fs.readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8");
+  assert(
+    (adminActionsSrc3.match(/rpc\("update_staff_role"/g) || []).length === 2,
+    "Staff #70: both updateStaffRoleAction and removeStaffMemberAction call the atomic update_staff_role RPC (not their own racy count-then-update)"
+  );
+  const updateRoleFnSrc3 = adminActionsSrc3.slice(
+    adminActionsSrc3.indexOf("export async function updateStaffRoleAction"),
+    adminActionsSrc3.indexOf("export async function createStaffMemberAction")
+  );
+  assert(
+    !/count:\s*"exact"/.test(updateRoleFnSrc3),
+    "Staff #70: updateStaffRoleAction no longer does its own last-admin count-then-update"
+  );
+  assert(
+    adminActionsSrc3.includes('role: is_admin ? "ADMIN" : "EMPLOYEE",'),
+    "Staff #70: a new staff member's real authorization role reflects the explicit is_admin opt-in"
+  );
+  assert(
+    adminActionsSrc3.includes("LAST_ADMIN_PROTECTED") &&
+      adminActionsSrc3.includes("STAFF_NOT_FOUND") &&
+      adminActionsSrc3.includes("CANNOT_MODIFY_OWN_ROLE"),
+    "Staff #70: all RPC error codes (including CANNOT_MODIFY_OWN_ROLE) are mapped to friendly messages"
+  );
+  assert(
+    updateRoleFnSrc3.includes("session.user && user_id === session.user.id"),
+    "Staff #70: updateStaffRoleAction explicitly rejects self-role modifications on the server before database mutation"
+  );
+  assert(
+    adminActionsSrc3.includes("A staff account with this email already exists"),
+    "Staff #69: createStaffMemberAction provides guidance to reactivate when attempting to re-add an existing inactive email"
+  );
+
+  // #69: removeStaffMemberAction preserves the target's role (deactivation only
+  // flips is_active, so a later reactivation restores the same role automatically).
+  const removeFnSrc = adminActionsSrc3.slice(
+    adminActionsSrc3.indexOf("export async function removeStaffMemberAction"),
+    adminActionsSrc3.length
+  );
+  assert(
+    removeFnSrc.includes("p_role: targetRole.role,") && removeFnSrc.includes("p_is_active: false,"),
+    "Staff #69: removing a staff member preserves their role, only clearing is_active"
+  );
+  assert(
+    removeFnSrc.includes("session.user?.id === user_id"),
+    "Staff #70: removeStaffMemberAction rejects self-removal/deactivation on the server"
+  );
+
+  // #89: getAdminStaffMembers fetches auth user details by ID, not a fixed-size page.
+  const adminQueriesSrc3 = fs.readFileSync(path.join(process.cwd(), "lib/admin/queries.ts"), "utf8");
+  assert(
+    !adminQueriesSrc3.includes(".listUsers(") && adminQueriesSrc3.includes("getUserById(id)"),
+    "Staff #89: staff emails are resolved by user ID, not a 200-user listUsers page"
+  );
+  assert(
+    !adminQueriesSrc3.includes('.eq("is_active", true)\n      .order("created_at"'),
+    "Staff #69: getAdminStaffMembers no longer filters out inactive (removed) staff"
+  );
+
+  // UI wiring: promote/demote, reactivate, and the Add-Staff admin opt-in are all
+  // actually connected to the server actions above.
+  const adminStaffViewSrc3 = fs.readFileSync(
+    path.join(process.cwd(), "components/admin/admin-staff-view.tsx"),
+    "utf8"
+  );
+  assert(
+    adminStaffViewSrc3.includes("updateStaffRoleAction") &&
+      adminStaffViewSrc3.includes("handleRoleChange") &&
+      adminStaffViewSrc3.includes('member.role === "ADMIN" ? "EMPLOYEE" : "ADMIN"'),
+    "Staff #70: the staff list has a working Promote/Demote control wired to updateStaffRoleAction"
+  );
+  assert(
+    adminStaffViewSrc3.includes("Reactivate") &&
+      adminStaffViewSrc3.includes("role: member.role, is_active: true"),
+    "Staff #69: the staff list has a working Reactivate control that preserves the existing role"
+  );
+  assert(
+    adminStaffViewSrc3.includes("addIsAdmin") &&
+      adminStaffViewSrc3.includes("is_admin: addIsAdmin"),
+    "Staff #70: the Add Staff form has an explicit admin opt-in wired to createStaffMemberAction"
+  );
+  // The RLS policy and atomic RPC themselves are verified with real behavioral
+  // assertions against local Supabase in supabase/tests/014_staff_identity_and_role_management.test.sql
+  // and 015_staff_self_role_and_invariants.test.sql.
+  const migrationSrc26 = fs.readFileSync(
+    path.join(process.cwd(), "supabase/migrations/0026_staff_identity_and_role_management.sql"),
+    "utf8"
+  );
+  assert(
+    migrationSrc26.includes("create policy profiles_admin_update on profiles for update to authenticated") &&
+      migrationSrc26.includes("using (is_admin()) with check (is_admin());"),
+    "Staff #68: migration 0026 adds a narrowly-scoped admin-only UPDATE policy on profiles, not a broad grant"
+  );
+
+  const migrationSrc27 = fs.readFileSync(
+    path.join(process.cwd(), "supabase/migrations/0027_prevent_self_role_demotion_and_concurrency.sql"),
+    "utf8"
+  );
+  assert(
+    migrationSrc27.includes("CANNOT_MODIFY_OWN_ROLE") &&
+      migrationSrc27.includes("p_user_id = auth.uid()"),
+    "Staff #70: migration 0027 rejects self-role modification at the database level independently"
+  );
+  assert(
+    migrationSrc27.includes("pg_advisory_xact_lock(hashtext('staff_roles_lock'))"),
+    "Staff #70: migration 0027 serializes administrative role modifications via pg_advisory_xact_lock to eliminate deadlocks and races"
+  );
+  assert(
+    migrationSrc27.includes("create or replace function public.protect_last_admin()") &&
+      migrationSrc27.includes("before update or delete on staff_roles"),
+    "Staff #70: migration 0027 hardens protect_last_admin trigger against direct table mutations"
   );
 
   console.log("\n========================================================");
