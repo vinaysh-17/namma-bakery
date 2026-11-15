@@ -1064,26 +1064,29 @@ export async function unarchiveBusinessHourAction(
     let restoreCloses = rawInput.closes;
 
     if (!restoreOpens || !restoreCloses) {
-      // Look up previous record from audit_log if available
+      // Look up the previous record from audit_logs if available. The table is
+      // audit_logs (entity_type / before_data / created_at), not audit_log /
+      // table_name / old_data / performed_at -- those never existed, so this lookup
+      // silently found nothing and always fell back to the 10:00-21:30 default (#87).
       try {
         const { data: auditEntries } = await supabase
-          .from("audit_log")
-          .select("old_data")
-          .eq("table_name", "business_hours")
-          .order("performed_at", { ascending: false })
+          .from("audit_logs")
+          .select("before_data")
+          .eq("entity_type", "business_hours")
+          .order("created_at", { ascending: false })
           .limit(20);
 
         if (auditEntries) {
           const match = auditEntries.find((entry) => {
-            const data = entry.old_data as Record<string, unknown> | null;
+            const data = entry.before_data as Record<string, unknown> | null;
             return (
               data &&
               data.location_id === location_id &&
               Number(data.weekday) === weekday
             );
           });
-          if (match && match.old_data) {
-            const old = match.old_data as Record<string, string>;
+          if (match && match.before_data) {
+            const old = match.before_data as Record<string, string>;
             if (old.opens && old.closes) {
               restoreOpens = old.opens.slice(0, 5);
               restoreCloses = old.closes.slice(0, 5);

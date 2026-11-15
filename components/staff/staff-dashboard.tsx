@@ -164,7 +164,14 @@ export function StaffDashboard({
 
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [appliedDeepLinkKey, setAppliedDeepLinkKey] = React.useState<string | null>(null);
-  const refreshRequestedForKey = React.useRef<string | null>(null);
+  // Tracks (in a ref, read only inside the effect below) which deep-link key we have
+  // already asked the server to refresh for, so a permanently-missing record is
+  // retried exactly once rather than forever.
+  const refreshAttemptedKeyRef = React.useRef<string | null>(null);
+  // Set from the effect once a refreshed deep link is still missing. Plain state (not
+  // the ref above) because this flag is read during render; refs may only be read in
+  // effects/handlers.
+  const [deepLinkGaveUpKey, setDeepLinkGaveUpKey] = React.useState<string | null>(null);
   const searchParams = useSearchParams();
   const urlKey = searchParams.toString();
 
@@ -186,8 +193,16 @@ export function StaffDashboard({
 
   // URL -> state: deep links from notifications / toasts, including when the portal is
   // already open (router.push updates useSearchParams). Selection IDs come from the
-  // structured notification link, never from message text. State is adjusted during
-  // render (keyed on the URL) rather than in an effect.
+  // structured notification link, never from message text.
+  //
+  // The sync itself runs during render (React's documented pattern for adjusting state
+  // in response to a changed input, https://react.dev/learn/you-might-not-need-an-effect)
+  // rather than in an effect: an effect that calls setState synchronously just to
+  // re-derive state is flagged by this project's react-hooks/set-state-in-effect lint
+  // rule, and is unnecessary here since nothing below depends on the filter/date being
+  // pre-applied for the drawer to open (see `selectedCustomCake` further down, which is
+  // resolved from the complete `customCakeRequests` collection, not the filtered/dated
+  // list view) -- the one thing that previously raced this block.
   const urlParams = new URLSearchParams(urlKey);
   const tabParam = urlParams.get("tab");
   const orderIdParam = urlParams.get("orderId");
@@ -205,37 +220,58 @@ export function StaffDashboard({
   const deepLinkMissing =
     (Boolean(requestIdParam) && !deepLinkRequest) ||
     (!requestIdParam && Boolean(orderIdParam) && !deepLinkOrder);
+  // Already asked the server to refresh once for this exact deep link and it is still
+  // missing: stop waiting on it (never spin forever on a record that does not exist or
+  // is not accessible to this staff member).
+  const deepLinkGaveUp = deepLinkMissing && deepLinkGaveUpKey === deepLinkKey;
 
-  if (deepLinkKey !== appliedDeepLinkKey && !deepLinkMissing) {
+  if (deepLinkKey !== appliedDeepLinkKey && (!deepLinkMissing || deepLinkGaveUp)) {
     setAppliedDeepLinkKey(deepLinkKey);
     if (deepLinkRequest) {
       setActiveTab("CUSTOM_CAKES");
       setActiveCustomCakeFilter("ALL");
       setSelectedCustomCakeDate(getIstDateString(deepLinkRequest.created_at));
       setSelectedCustomCakeId(deepLinkRequest.id);
-      } else if (deepLinkOrder) {
+    } else if (deepLinkOrder) {
       setActiveTab("ORDERS");
       setActiveOrderFilter("ALL");
       setSelectedDate(getOrderPickupDateIst(deepLinkOrder));
       setSelectedOrderId(deepLinkOrder.id);
+    } else if (deepLinkGaveUp) {
+      // A specific record was linked but is permanently missing/inaccessible: still
+      // honour a plain tab switch (regardless of how many deep links came before this
+      // one in the session) so the user is never left stuck looking at the wrong tab.
+      if (tabParam === "CUSTOM_CAKES" || tabParam === "ORDERS") {
+        setActiveTab(tabParam);
+      }
     } else if (
       appliedDeepLinkKey === null &&
       (tabParam === "CUSTOM_CAKES" || tabParam === "ORDERS")
     ) {
-      // Tab-only URL: honour on first load only, so clearing a selection param later
-      // never switches tabs under the user
+      // Tab-only URL (no record id at all): honour on first load only, so clearing a
+      // selection param later never switches tabs under the user.
       setActiveTab(tabParam);
     }
   }
 
-  // Missing linked record: refresh server data once; the render-time sync above then
-  // applies the link automatically when the new props arrive.
+  // Missing linked record: refresh server data once (a genuine side effect, not a
+  // state re-derivation, so this stays in an effect). When the refreshed props arrive,
+  // the render-time sync above re-evaluates and applies the link, or gives up above.
+  //
+  // customCakeRequests/orders are in the dependency array (even though the effect body
+  // does not read them directly) because deepLinkMissing's boolean VALUE is unchanged
+  // across a refresh that still doesn't contain the record -- without them, this
+  // effect would never re-run after router.refresh() resolves, and the "give up"
+  // branch below would never be reached.
   React.useEffect(() => {
-    if (deepLinkMissing && refreshRequestedForKey.current !== deepLinkKey) {
-      refreshRequestedForKey.current = deepLinkKey;
+    if (!deepLinkMissing) return;
+    if (refreshAttemptedKeyRef.current !== deepLinkKey) {
+      refreshAttemptedKeyRef.current = deepLinkKey;
       router.refresh();
+    } else {
+      setDeepLinkGaveUpKey(deepLinkKey);
     }
-  }, [deepLinkMissing, deepLinkKey, router]);
+  }, [deepLinkMissing, deepLinkKey, customCakeRequests, orders, router]);
 
   // User-scoped unread custom cake tracking
   const storageKey = React.useMemo(() => {
@@ -295,27 +331,19 @@ export function StaffDashboard({
     return orders.find((o) => o.id === selectedOrderId) || null;
   }, [orders, selectedOrderId]);
 
-  // Selected custom cake request must belong to the active view AND the active status
-  // filter. Never falls back to another request; if a status change moves it out of the
-  // active filter, the selection resolves to null and the panel closes.
+  // Selected custom cake request is resolved from the COMPLETE loaded collection, not
+  // the date/filter-limited list view: a deep link (or a realtime update) may select a
+  // record that the current filter/date would otherwise exclude, and the detail panel
+  // must still be able to show it. Never falls back to another request.
   const selectedCustomCake = React.useMemo(() => {
     if (!selectedCustomCakeId) return null;
-    return (
-      customCakeRequestsForView.find(
-        (c) =>
-          c.id === selectedCustomCakeId &&
-          matchesStaffFilter(getStaffStatus(c), activeCustomCakeFilter)
-      ) || null
-    );
-  }, [
-    customCakeRequestsForView,
-    selectedCustomCakeId,
-    activeCustomCakeFilter,
-    getStaffStatus,
-  ]);
+    return customCakeRequests.find((c) => c.id === selectedCustomCakeId) || null;
+  }, [customCakeRequests, selectedCustomCakeId]);
 
-  // Drop a selection that is no longer valid (e.g. a status change moved it out of the
-  // active filter) so it can never silently reappear under another filter.
+  // Drop a selection whose record no longer exists at all (e.g. deleted or no longer
+  // accessible to this staff member). Explicit filter/date changes close the panel
+  // themselves (see handleSelectCustomCakeFilter / handleCustomCakeDateChange below) so
+  // this is only a safety net for the record disappearing outright.
   if (selectedCustomCakeId && !selectedCustomCake) {
     setSelectedCustomCakeId(null);
   }

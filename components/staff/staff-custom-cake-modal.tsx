@@ -12,6 +12,11 @@ import {
   type CustomCakeStaffStatus,
 } from "@/lib/staff/custom-cake-workflow";
 import { formatOrderStatusLabel } from "@/lib/staff/formatters";
+import {
+  formatIstDateTime,
+  parseIstLocalInputValue,
+  toIstLocalInputValue,
+} from "@/lib/utils/date";
 
 /**
  * Dialogs for the PENDING stage of a custom cake request (before an order exists).
@@ -45,15 +50,6 @@ export function StaffCustomCakeModal({
   );
 }
 
-function toLocalInputValue(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate()
-  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 function StaffCustomCakeModalContent({
   modal,
   onClose,
@@ -80,7 +76,7 @@ function StaffCustomCakeModalContent({
   // Optional. Starts as the customer's requested pickup so leaving it unchanged (or
   // clearing it) keeps their schedule; editing it confirms a different time.
   const requestedPickupValue = React.useMemo(
-    () => toLocalInputValue(request.preferred_pickup_at),
+    () => toIstLocalInputValue(request.preferred_pickup_at),
     [request.preferred_pickup_at]
   );
   const [pickupAt, setPickupAt] = React.useState(requestedPickupValue);
@@ -103,7 +99,7 @@ function StaffCustomCakeModalContent({
         let confirmedPickupAt: string | undefined;
         // Only send a value when staff actually changed it from the customer's request
         if (pickupAt.trim() && pickupAt !== requestedPickupValue) {
-          const pickup = new Date(pickupAt);
+          const pickup = parseIstLocalInputValue(pickupAt);
           if (Number.isNaN(pickup.getTime())) {
             setErrorMessage("Enter a valid Confirmed Pickup / Ready Time or leave it empty.");
             setIsSubmitting(false);
@@ -205,12 +201,9 @@ function StaffCustomCakeModalContent({
           {type === "ACCEPT" && (
             <div className="space-y-3">
               <div className="rounded-sm border border-border bg-background p-3 text-xs space-y-1">
-                <span className="text-muted-foreground">Requested Pickup (customer):</span>
+                <span className="text-muted-foreground">Requested Pickup (customer, IST):</span>
                 <span className="font-semibold text-foreground block">
-                  {new Date(request.preferred_pickup_at).toLocaleString("en-IN", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
+                  {formatIstDateTime(request.preferred_pickup_at)}
                 </span>
               </div>
 
@@ -240,7 +233,7 @@ function StaffCustomCakeModalContent({
                   htmlFor="confirmedPickup"
                   className="block text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5"
                 >
-                  Confirmed Pickup / Ready Time
+                  Confirmed Pickup / Ready Time (IST)
                 </label>
                 <input
                   id="confirmedPickup"

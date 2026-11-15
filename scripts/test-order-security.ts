@@ -27,7 +27,15 @@ import {
   maskPhoneNumber,
 } from "../lib/custom-cake/tracking-session";
 import { checkRateLimit } from "../lib/security/rate-limiter";
-import { DEFAULT_LOCATION_SLUG } from "../lib/pickup/queries";
+import {
+  DEFAULT_LOCATION_SLUG,
+  getAvailablePickupSlots,
+  getPickupScheduleWindow,
+  getStoreStatus,
+  weekdayForDateString,
+} from "../lib/pickup/queries";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { execSync } from "node:child_process";
 import {
   adminCategorySchema,
   adminProductSchema,
@@ -51,7 +59,14 @@ import type { CustomCakeLinkedOrder, CustomCakeRequest } from "../lib/custom-cak
 import type { OrderStatus } from "../lib/orders/types";
 import type { PriceTierRule } from "../lib/menu/types";
 import type { AdminPriceTierRule } from "../lib/admin/types";
-import { formatIstDate, getIstDateString } from "../lib/utils/date";
+import {
+  formatIstDate,
+  formatPickupSlot,
+  getIstDateString,
+  parseIstLocalInputValue,
+  toIstLocalInputValue,
+} from "../lib/utils/date";
+import { getSlotBadgeLabel } from "../lib/pickup/utils";
 import { mapCartRpcError, extractProductName } from "../lib/orders/cart-errors";
 import { deriveCartIssues } from "../lib/cart/cart-issues";
 import type { CartItem } from "../lib/cart/types";
@@ -1518,7 +1533,7 @@ assert(
 );
 assert(
   /expectedUnitPricePaise: item\.unitPricePaise/.test(checkoutSrc) &&
-    /disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc) &&
+    /disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues \|\| pausedStatus\.isPaused\}/.test(checkoutSrc) &&
     /CartChangesNotice/.test(checkoutSrc),
   "Live menu: checkout sends the seen price, shows what changed and blocks Place Order until reviewed"
 );
@@ -1704,7 +1719,7 @@ assert(
     ["LEAD_TIME_NOT_MET", "SLOT_FULL", "OUTSIDE_OPENING_HOURS", "CLOSED_DAY"].every((c) => checkoutSrc.includes(`"${c}"`)),
   "Slot #76: if the database still refuses the pickup time, the slot is cleared so the customer chooses again"
 );
-assert(/disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues\}/.test(checkoutSrc), "Slot #76: the live-cart gate from #75 still blocks Place Order");
+assert(/disabled=\{!isPickupValid \|\| isSubmitting \|\| hasCartIssues \|\| pausedStatus\.isPaused\}/.test(checkoutSrc), "Slot #76: the live-cart gate from #75 still blocks Place Order");
 
 // --- Internal cake price-rule notes never reach customers (GitHub issue #72, customer side) ---
 console.log("\n--- Internal Price-Rule Notes Stay Admin-Only: Customer Side (#72) ---");
@@ -2132,10 +2147,962 @@ assert(
   "Custom Cake Photo UI #82: preview provides explicit change and remove controls"
 );
 
-console.log("\n========================================================");
-console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
-console.log("========================================================\n");
+// --- 11. Pickup Slot Query Availability & Fail-Closed Protection (#73) ---
+console.log("\n--- 11. Pickup Slot Query Availability & Fail-Closed Protection (#73) ---");
 
-if (failedCount > 0) {
-  process.exit(1);
+interface MockQueryResult<T> {
+  data: T | null;
+  error: { message: string } | null;
 }
+
+interface MockPickupOptions {
+  location?: MockQueryResult<{ id: string; slug: string; is_active: boolean }>;
+  storeStatus?: MockQueryResult<{ slot_minutes: number; orders_paused_until: string | null; pause_message: string | null }>;
+  closure?: MockQueryResult<{ closure_date: string; reason: string | null }>;
+  hours?: MockQueryResult<Array<{ opens: string; closes: string }>>;
+  rpc?: MockQueryResult<Array<{ slot_start: string; remaining: number }>>;
+  queries?: Array<{ table: string; filters: Record<string, unknown> }>;
+}
+
+type PickupSupabaseClient = NonNullable<Parameters<typeof getAvailablePickupSlots>[1]>;
+
+function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
+  const clientObj = {
+    from: (table: string) => {
+      const filters: Record<string, unknown> = {};
+      const builder = {
+        select: () => builder,
+        eq: (col: string, val: unknown) => {
+          filters[col] = val;
+          return builder;
+        },
+        limit: () => builder,
+        maybeSingle: async () => {
+          opts.queries?.push({ table, filters: { ...filters } });
+          if (table === "locations") {
+            return opts.location ?? { data: { id: "loc-test-1", slug: "namma-bakery-rr-nagar", is_active: true }, error: null };
+          }
+          if (table === "public_store_status") {
+            return opts.storeStatus ?? { data: { slot_minutes: 30, orders_paused_until: null, pause_message: null }, error: null };
+          }
+          if (table === "special_closures") {
+            return opts.closure ?? { data: null, error: null };
+          }
+          return { data: null, error: null };
+        },
+        then: <TResult1 = unknown, TResult2 = never>(
+          onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+        ) => {
+          opts.queries?.push({ table, filters: { ...filters } });
+          if (table === "business_hours") {
+            const res = opts.hours ?? { data: [{ opens: "10:00:00", closes: "21:30:00" }], error: null };
+            return Promise.resolve(res).then(onfulfilled, onrejected);
+          }
+          return Promise.resolve({ data: null, error: null }).then(onfulfilled, onrejected);
+        },
+      };
+      return builder;
+    },
+    rpc: async (fn: string) => {
+      if (fn === "available_slots") {
+        return opts.rpc ?? { data: [{ slot_start: "2026-11-20T10:00:00+05:30", remaining: 5 }], error: null };
+      }
+      return { data: null, error: null };
+    },
+  };
+  return clientObj as unknown as PickupSupabaseClient;
+}
+
+(async () => {
+  // 1. Successful RPC with available slots
+  const client1 = createMockPickupClient({
+    rpc: { data: [{ slot_start: "2026-11-20T10:00:00+05:30", remaining: 4 }], error: null },
+  });
+  const res1 = await getAvailablePickupSlots({ dateString: "2026-11-20", minLeadMinutes: 0 }, client1);
+  assert(
+    res1.slots.length === 1 &&
+      res1.isClosed === false &&
+      res1.error === undefined &&
+      res1.slots[0].formattedTime === "10:00 AM – 10:30 AM" &&
+      res1.slots[0].remaining === 4 &&
+      res1.slots[0].isAvailable === true,
+    "Pickup #73: Successful RPC maps available slots with correct timing and capacity"
+  );
+
+  // 2. Successful RPC with an empty array (legitimate zero-availability result)
+  const client2 = createMockPickupClient({
+    rpc: { data: [], error: null },
+  });
+  const res2 = await getAvailablePickupSlots({ dateString: "2026-11-20", minLeadMinutes: 0 }, client2);
+  assert(
+    res2.slots.length === 0 && res2.isClosed === false && res2.error === undefined,
+    "Pickup #73: Successful RPC with empty array returns 0 slots without fabricating fallback slots"
+  );
+
+  // 3. RPC error (fail closed)
+  const client3 = createMockPickupClient({
+    rpc: { data: null, error: { message: "database timeout" } },
+  });
+  const res3 = await getAvailablePickupSlots({ dateString: "2026-11-20", minLeadMinutes: 0 }, client3);
+  assert(
+    res3.slots.length === 0 && res3.isClosed === false && res3.error === "SLOT_FETCH_FAILED",
+    "Pickup #73: RPC error fails closed with SLOT_FETCH_FAILED and 0 slots"
+  );
+
+  // 4. Missing or invalid slot duration from store_settings
+  const client4Missing = createMockPickupClient({
+    storeStatus: { data: null, error: { message: "not found" } },
+  });
+  const res4Missing = await getAvailablePickupSlots({ dateString: "2026-11-20" }, client4Missing);
+  assert(
+    res4Missing.slots.length === 0 && res4Missing.error === "SLOT_FETCH_FAILED",
+    "Pickup #73: Missing store_settings slot_minutes fails closed"
+  );
+
+  const client4Invalid = createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 45, orders_paused_until: null, pause_message: null }, error: null },
+  });
+  const res4Invalid = await getAvailablePickupSlots({ dateString: "2026-11-20" }, client4Invalid);
+  assert(
+    res4Invalid.slots.length === 0 && res4Invalid.error === "INVALID_SLOT_DURATION",
+    "Pickup #73: Invalid slot_minutes fails closed with INVALID_SLOT_DURATION without defaulting"
+  );
+
+  // 5. Configured slot duration applied correctly (15 min and 60 min)
+  const client15 = createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 15, orders_paused_until: null, pause_message: null }, error: null },
+    rpc: { data: [{ slot_start: "2026-11-20T10:00:00+05:30", remaining: 3 }], error: null },
+  });
+  const res15 = await getAvailablePickupSlots({ dateString: "2026-11-20" }, client15);
+  assert(
+    res15.slots.length === 1 &&
+      res15.slots[0].formattedTime === "10:00 AM – 10:15 AM" &&
+      new Date(res15.slots[0].slotEnd).getTime() - new Date(res15.slots[0].slotStart).getTime() === 15 * 60 * 1000,
+    "Pickup #73: Configured 15-minute slot duration correctly formats time and slot end"
+  );
+
+  const client60 = createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 60, orders_paused_until: null, pause_message: null }, error: null },
+    rpc: { data: [{ slot_start: "2026-11-20T10:00:00+05:30", remaining: 3 }], error: null },
+  });
+  const res60 = await getAvailablePickupSlots({ dateString: "2026-11-20" }, client60);
+  assert(
+    res60.slots.length === 1 &&
+      res60.slots[0].formattedTime === "10:00 AM – 11:00 AM" &&
+      new Date(res60.slots[0].slotEnd).getTime() - new Date(res60.slots[0].slotStart).getTime() === 60 * 60 * 1000,
+    "Pickup #73: Configured 60-minute slot duration correctly formats time and slot end"
+  );
+
+  // 6. Special closure date
+  const clientClosure = createMockPickupClient({
+    closure: { data: { closure_date: "2026-11-20", reason: "Maintenance Holiday" }, error: null },
+  });
+  const resClosure = await getAvailablePickupSlots({ dateString: "2026-11-20" }, clientClosure);
+  assert(
+    resClosure.slots.length === 0 &&
+      resClosure.isClosed === true &&
+      resClosure.closureReason === "Maintenance Holiday",
+    "Pickup #73: Special closure date returns isClosed=true and closureReason"
+  );
+
+  // 7. Weekly closed day (no business_hours entry for weekday)
+  const clientClosedDay = createMockPickupClient({
+    hours: { data: [], error: null },
+  });
+  const resClosedDay = await getAvailablePickupSlots({ dateString: "2026-11-20" }, clientClosedDay);
+  assert(
+    resClosedDay.slots.length === 0 &&
+      resClosedDay.isClosed === true &&
+      resClosedDay.closureReason === "Bakery closed on this day",
+    "Pickup #73: Weekly closed day returns isClosed=true and Bakery closed on this day"
+  );
+
+  // 8. getStoreStatus scoped to intended location & fail-closed behavior
+  const statusQueries: Array<{ table: string; filters: Record<string, unknown> }> = [];
+  const storeStatusClient = createMockPickupClient({
+    queries: statusQueries,
+    storeStatus: { data: { slot_minutes: 30, orders_paused_until: null, pause_message: null }, error: null },
+  });
+  const storeStatusValid = await getStoreStatus(storeStatusClient);
+  assert(
+    storeStatusValid.slotMinutes === 30 &&
+      storeStatusValid.error === undefined &&
+      statusQueries.some((q) => q.table === "locations" && q.filters.slug === DEFAULT_LOCATION_SLUG) &&
+      statusQueries.some((q) => q.table === "public_store_status" && q.filters.location_id === "loc-test-1"),
+    "Pickup #73: getStoreStatus is scoped to intended location slug and location_id"
+  );
+
+  const storeStatusInvalid = await getStoreStatus(createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 45, orders_paused_until: null, pause_message: null }, error: null },
+  }));
+  assert(
+    storeStatusInvalid.slotMinutes === 0 && storeStatusInvalid.error === "INVALID_SLOT_DURATION",
+    "Pickup #73: getStoreStatus fails closed on invalid slot_minutes without defaulting"
+  );
+
+  const storeStatusMissingLocation = await getStoreStatus(createMockPickupClient({
+    location: { data: null, error: { message: "location not found" } },
+  }));
+  assert(
+    storeStatusMissingLocation.slotMinutes === 0 && storeStatusMissingLocation.error === "STORE_STATUS_UNAVAILABLE",
+    "Pickup #73: getStoreStatus fails closed when location resolution fails"
+  );
+
+  // 9. Timezone-independent weekday calculation (Asia/Kolkata vs America/Los_Angeles)
+  const initialTz = process.env.TZ;
+  try {
+    // 2026-11-20 is a Friday (dow = 5) in IST
+    process.env.TZ = "Asia/Kolkata";
+    const queriesIst: Array<{ table: string; filters: Record<string, unknown> }> = [];
+    const clientIst = createMockPickupClient({ queries: queriesIst });
+    await getAvailablePickupSlots({ dateString: "2026-11-20" }, clientIst);
+    const bhIst = queriesIst.find((q) => q.table === "business_hours");
+
+    process.env.TZ = "America/Los_Angeles";
+    const queriesLa: Array<{ table: string; filters: Record<string, unknown> }> = [];
+    const clientLa = createMockPickupClient({ queries: queriesLa });
+    await getAvailablePickupSlots({ dateString: "2026-11-20" }, clientLa);
+    const bhLa = queriesLa.find((q) => q.table === "business_hours");
+
+    assert(
+      bhIst?.filters.weekday === 5 && bhLa?.filters.weekday === 5,
+      "Pickup #73: Weekday calculation is identical under TZ=Asia/Kolkata and TZ=America/Los_Angeles"
+    );
+
+    // Verify all 7 days of the week in IST remain identical in America/Los_Angeles
+    // 2026-11-15 (Sun) to 2026-11-21 (Sat)
+    const weekdaysUnderTest = ["2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21"];
+    let allDaysMatch = true;
+    for (let expectedDow = 0; expectedDow < 7; expectedDow++) {
+      const qList: Array<{ table: string; filters: Record<string, unknown> }> = [];
+      const testClient = createMockPickupClient({ queries: qList });
+      await getAvailablePickupSlots({ dateString: weekdaysUnderTest[expectedDow] }, testClient);
+      const matched = qList.find((q) => q.table === "business_hours");
+      if (matched?.filters.weekday !== expectedDow) {
+        allDaysMatch = false;
+        break;
+      }
+    }
+    assert(
+      allDaysMatch,
+      "Pickup #73: Friday remains Friday (and all weekdays 0..6 match) regardless of runtime timezone"
+    );
+  } finally {
+    process.env.TZ = initialTz;
+  }
+
+  // 10. Rejection of invalid calendar rollover dates (e.g. 2026-02-31)
+  const invalidDateClient = createMockPickupClient({});
+  const resFeb31 = await getAvailablePickupSlots({ dateString: "2026-02-31" }, invalidDateClient);
+  const resApr31 = await getAvailablePickupSlots({ dateString: "2026-04-31" }, invalidDateClient);
+  const resNov31 = await getAvailablePickupSlots({ dateString: "2026-11-31" }, invalidDateClient);
+  const resMalformed = await getAvailablePickupSlots({ dateString: "not-a-date" }, invalidDateClient);
+
+  assert(
+    resFeb31.slots.length === 0 &&
+      resFeb31.error === "INVALID_DATE" &&
+      resApr31.error === "INVALID_DATE" &&
+      resNov31.error === "INVALID_DATE" &&
+      resMalformed.error === "INVALID_DATE",
+    "Pickup #73: Invalid calendar dates such as 2026-02-31 return INVALID_DATE without rolling over"
+  );
+
+  // 11. UI loading precedence and same-date retry mechanics
+  const selectorSrc73 = fs.readFileSync(path.join(process.cwd(), "components/pickup/pickup-selector.tsx"), "utf8");
+  assert(
+    selectorSrc73.includes("isLoadingSlots ? (") &&
+      selectorSrc73.indexOf("isLoadingSlots ? (") < selectorSrc73.indexOf("closureReason ? (") &&
+      selectorSrc73.indexOf("isLoadingSlots ? (") < selectorSrc73.indexOf("slotError ? ("),
+    "Pickup #73: A failed request followed by a date change displays loading rather than the previous error"
+  );
+  assert(
+    selectorSrc73.includes("handleRetry") &&
+      selectorSrc73.includes("Try Again") &&
+      selectorSrc73.includes("retryNonce"),
+    "Pickup #73: Retry triggers another request for the same date with accessible Try Again button"
+  );
+
+  // 12. Static anti-fabrication assertions
+  const queriesSrc73 = fs.readFileSync(path.join(process.cwd(), "lib/pickup/queries.ts"), "utf8");
+  assert(
+    !queriesSrc73.includes("generateSlotsForDate") && !queriesSrc73.includes("DEFAULT_CLOSES_TIME"),
+    "Pickup #73: queries.ts has no fallback to generateSlotsForDate or DEFAULT_CLOSES_TIME"
+  );
+  assert(
+    !queriesSrc73.includes("DEFAULT_SLOT_MINUTES"),
+    "Pickup #73: queries.ts does not use hardcoded DEFAULT_SLOT_MINUTES"
+  );
+  assert(
+    queriesSrc73.includes("VALID_SLOT_MINUTES") && queriesSrc73.includes("INVALID_SLOT_DURATION"),
+    "Pickup #73: queries.ts strictly validates configured slot_minutes"
+  );
+
+  // --- 13. Pickup Date Picker Schedule Availability (#73 Stage 3) ---
+  console.log("\n--- 13. Pickup Date Picker Schedule Availability (#73 Stage 3) ---");
+
+  interface MockScheduleOptions {
+    locationData?: { id: string } | null;
+    locationError?: boolean;
+    hoursWeekdays?: number[];
+    hoursError?: boolean;
+    closures?: Array<{ closure_date: string; reason: string | null }>;
+    closuresError?: boolean;
+  }
+
+  type ScheduleSupabaseClient = NonNullable<Parameters<typeof getPickupScheduleWindow>[1]>;
+
+  function createMockScheduleClient(opts: MockScheduleOptions): ScheduleSupabaseClient {
+    const clientObj = {
+      from: (table: string) => {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          gte: () => builder,
+          lte: () => builder,
+          maybeSingle: async () => {
+            if (table === "locations") {
+              if (opts.locationError) return { data: null, error: { message: "db error" } };
+              return {
+                data: opts.locationData === undefined ? { id: "loc-sched-1" } : opts.locationData,
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          },
+          then: <TResult1 = unknown, TResult2 = never>(
+            onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
+            onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+          ) => {
+            if (table === "business_hours") {
+              if (opts.hoursError) {
+                return Promise.resolve({ data: null, error: { message: "db error" } }).then(onfulfilled, onrejected);
+              }
+              const rows = (opts.hoursWeekdays ?? [0, 1, 2, 3, 4, 5, 6]).map((weekday) => ({ weekday }));
+              return Promise.resolve({ data: rows, error: null }).then(onfulfilled, onrejected);
+            }
+            if (table === "special_closures") {
+              if (opts.closuresError) {
+                return Promise.resolve({ data: null, error: { message: "db error" } }).then(onfulfilled, onrejected);
+              }
+              return Promise.resolve({ data: opts.closures ?? [], error: null }).then(onfulfilled, onrejected);
+            }
+            return Promise.resolve({ data: null, error: null }).then(onfulfilled, onrejected);
+          },
+        };
+        return builder;
+      },
+    };
+    return clientObj as unknown as ScheduleSupabaseClient;
+  }
+
+  // 1. All seven weekdays open, no special closures -> nothing disabled
+  const scheduleAllOpen = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ hoursWeekdays: [0, 1, 2, 3, 4, 5, 6], closures: [] })
+  );
+  assert(
+    scheduleAllOpen.closedWeekdays.length === 0 &&
+      Object.keys(scheduleAllOpen.specialClosures).length === 0 &&
+      scheduleAllOpen.error === undefined,
+    "Pickup #73 Stage 3: All seven weekdays configured open yields no closed weekdays"
+  );
+
+  // 2. A weekday with no business_hours row is reported closed
+  const scheduleSundayClosed = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ hoursWeekdays: [1, 2, 3, 4, 5, 6] })
+  );
+  assert(
+    scheduleSundayClosed.closedWeekdays.length === 1 && scheduleSundayClosed.closedWeekdays[0] === 0,
+    "Pickup #73 Stage 3: A weekday missing from business_hours is reported as weekly closed"
+  );
+
+  // 3. Special closure within the window is surfaced with its reason, distinct from weekly closures
+  const scheduleSpecial = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({
+      hoursWeekdays: [0, 1, 2, 3, 4, 5, 6],
+      closures: [{ closure_date: "2026-11-20", reason: "Festival Holiday" }],
+    })
+  );
+  assert(
+    scheduleSpecial.closedWeekdays.length === 0 &&
+      scheduleSpecial.specialClosures["2026-11-20"] === "Festival Holiday",
+    "Pickup #73 Stage 3: Special closure date is surfaced with its reason and does not mark the weekday closed"
+  );
+
+  // 4. A special closure with a null reason falls back to a generic message rather than blank
+  const scheduleSpecialNullReason = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ closures: [{ closure_date: "2026-11-21", reason: null }] })
+  );
+  assert(
+    scheduleSpecialNullReason.specialClosures["2026-11-21"] === "Bakery closed on this date",
+    "Pickup #73 Stage 3: Special closure with no reason falls back to a generic closed message"
+  );
+
+  // 5. Fail closed: location resolution failure
+  const scheduleNoLocation = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ locationData: null })
+  );
+  assert(
+    scheduleNoLocation.error === "LOCATION_NOT_FOUND" &&
+      scheduleNoLocation.closedWeekdays.length === 0 &&
+      Object.keys(scheduleNoLocation.specialClosures).length === 0,
+    "Pickup #73 Stage 3: Unresolvable location fails closed with no fabricated availability"
+  );
+
+  // 6. Fail closed: business_hours query error
+  const scheduleHoursError = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ hoursError: true })
+  );
+  assert(
+    scheduleHoursError.error === "SCHEDULE_FETCH_FAILED" && scheduleHoursError.closedWeekdays.length === 0,
+    "Pickup #73 Stage 3: business_hours query failure fails closed rather than defaulting to open"
+  );
+
+  // 7. Fail closed: special_closures query error
+  const scheduleClosuresError = await getPickupScheduleWindow(
+    { startDate: "2026-11-15", endDate: "2026-11-24" },
+    createMockScheduleClient({ closuresError: true })
+  );
+  assert(
+    scheduleClosuresError.error === "SCHEDULE_FETCH_FAILED",
+    "Pickup #73 Stage 3: special_closures query failure fails closed rather than defaulting to open"
+  );
+
+  // 8. weekdayForDateString is timezone-independent (matches PostgreSQL extract(dow))
+  const initialTzStage3 = process.env.TZ;
+  try {
+    process.env.TZ = "Asia/Kolkata";
+    const fridayIst = weekdayForDateString("2026-11-20");
+    process.env.TZ = "America/Los_Angeles";
+    const fridayLa = weekdayForDateString("2026-11-20");
+    assert(
+      fridayIst === 5 && fridayLa === 5,
+      "Pickup #73 Stage 3: weekdayForDateString agrees across runtime timezones"
+    );
+  } finally {
+    process.env.TZ = initialTzStage3;
+  }
+
+  // 9. Static assertions: the date picker fetches once per horizon, fails closed while
+  // unknown, and distinguishes weekly vs special closures rather than hardcoding either.
+  const datePickerSrc = fs.readFileSync(
+    path.join(process.cwd(), "components/pickup/pickup-date-picker.tsx"),
+    "utf8"
+  );
+  assert(
+    datePickerSrc.includes("getPickupScheduleWindow(") &&
+      !/for\s*\(.*dateOptions/.test(datePickerSrc),
+    "Pickup #73 Stage 3: Date picker fetches the schedule window once rather than per calendar cell"
+  );
+  assert(
+    datePickerSrc.includes("isScheduleLoading || scheduleData.error") && datePickerSrc.includes("isAvailable: false"),
+    "Pickup #73 Stage 3: Dates are disabled (never silently available) while the schedule is loading or failed"
+  );
+  assert(
+    datePickerSrc.includes("specialClosures[option.dateString]") &&
+      datePickerSrc.includes("closedWeekdays.has("),
+    "Pickup #73 Stage 3: Weekly closures and special closures are checked as distinct, data-driven conditions"
+  );
+
+  // --- 14. Custom Cake Confirmation Against Local Supabase (Issue B) ---
+  console.log("\n--- 14. Custom Cake Confirmation Against Local Supabase (Issue B) ---");
+
+  function getLocalSupabaseEnv(): { url: string; secretKey: string } | null {
+    try {
+      const output = execSync("npx supabase status -o json", {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 15000,
+      }).toString();
+      const parsed = JSON.parse(output);
+      if (!parsed.API_URL || !parsed.SECRET_KEY) return null;
+      return { url: parsed.API_URL, secretKey: parsed.SECRET_KEY };
+    } catch {
+      return null;
+    }
+  }
+
+  const localSupabaseEnv = getLocalSupabaseEnv();
+  if (!localSupabaseEnv) {
+    console.log(
+      "  SKIPPED: local Supabase is not reachable (run `npx supabase start`). Issue #B was not verified against a live database this run."
+    );
+  } else {
+    // lib/supabase/admin.ts and lib/custom-cake/actions.ts import the "server-only"
+    // package, which throws unconditionally outside a Next.js server runtime, so this
+    // offline script talks to local Supabase directly instead of calling those modules.
+    // The confirmation page's exact select string is extracted from the real source
+    // below so this still exercises the real query shape and schema dependency, not a
+    // hand-rolled duplicate that could silently drift from production.
+    const actionsSrcForSelect = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/actions.ts"), "utf8");
+    const selectMatch = actionsSrcForSelect.match(/\.from\("custom_cake_requests"\)\s*\.select\(`([\s\S]*?)`\)/);
+    if (!selectMatch) {
+      throw new Error("Could not extract the custom cake public view select from lib/custom-cake/actions.ts");
+    }
+    const customCakePublicViewSelect = selectMatch[1];
+
+    const admin = createSupabaseClient(localSupabaseEnv.url, localSupabaseEnv.secretKey);
+
+    let seededRequestId: string | null = null;
+    try {
+      const { data: location, error: locationErr } = await admin
+        .from("locations")
+        .select("id")
+        .eq("slug", DEFAULT_LOCATION_SLUG)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (locationErr || !location?.id) {
+        console.log("  SKIPPED: local Supabase has no active location seeded; Issue #B was not verified this run.");
+      } else {
+        const testPhone = "9845291234";
+        const { data: rpcData, error: rpcError } = await admin.rpc("submit_custom_request", {
+          p_location_id: location.id,
+          p_customer_id: null,
+          p_name: "Confirmation Test Customer",
+          p_phone: testPhone,
+          p_email: "confirmation-test@example.com",
+          p_flavour: "Chocolate Truffle",
+          p_egg: "EGGLESS",
+          p_weight_grams: 1000,
+          p_shape: "Round",
+          p_cake_type: "Birthday",
+          p_message: "Happy Birthday",
+          p_description: "Two-tier chocolate cake for a birthday party.",
+          p_pickup: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+          p_notes: null,
+        });
+
+        if (rpcError || !rpcData) {
+          assert(false, "Custom Cake #B: submit_custom_request RPC succeeds against local Supabase", rpcError?.message);
+        } else {
+          const created = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+          seededRequestId = created.request_id as string;
+          const publicToken = created.public_token as string;
+
+          assert(
+            Boolean(seededRequestId) && Boolean(publicToken),
+            "Custom Cake #B: Enquiry submission against local Supabase returns a request id and public token"
+          );
+
+          await admin.from("request_messages").insert([
+            { request_id: seededRequestId, sender: "STAFF", body: "We can do this, confirming your slot.", is_internal: false },
+            { request_id: seededRequestId, sender: "STAFF", body: "Customer is a regular, prioritize.", is_internal: true },
+          ]);
+
+          // The exact query the confirmation page action runs (same select string,
+          // same is_internal filter), proving the live schema and query are compatible.
+          const { data: viewRow, error: viewError } = await admin
+            .from("custom_cake_requests")
+            .select(customCakePublicViewSelect)
+            .eq("public_token", publicToken)
+            .eq("request_messages.is_internal", false)
+            .maybeSingle();
+
+          assert(
+            !viewError && Boolean((viewRow as { request_number?: string } | null)?.request_number),
+            "Custom Cake #B: The confirmation page's exact query loads the enquiry just created against local Supabase (fixes the hosted/local schema mismatch)"
+          );
+
+          const messages = ((viewRow as { request_messages?: Array<{ body: string }> } | null)?.request_messages) ?? [];
+          assert(
+            messages.some((m) => m.body === "We can do this, confirming your slot.") &&
+              !messages.some((m) => m.body === "Customer is a regular, prioritize."),
+            "Custom Cake #B: Internal staff notes are excluded by the query's is_internal filter"
+          );
+          assert(
+            !JSON.stringify(viewRow ?? {}).includes(testPhone) &&
+              !JSON.stringify(viewRow ?? {}).includes("confirmation-test@example.com"),
+            "Custom Cake #B: The select list never requests full customer phone number or email"
+          );
+
+          const { data: badTokenRow, error: badTokenError } = await admin
+            .from("custom_cake_requests")
+            .select(customCakePublicViewSelect)
+            .eq("public_token", "nonexistent-token-aaaaaaaaaaaaaaaaaaaa")
+            .eq("request_messages.is_internal", false)
+            .maybeSingle();
+          assert(
+            !badTokenError && !badTokenRow,
+            "Custom Cake #B: A well-formed but unknown token resolves to no row, not a query error"
+          );
+        }
+      }
+    } finally {
+      if (seededRequestId) {
+        try {
+          await admin.from("request_messages").delete().eq("request_id", seededRequestId);
+          await admin.from("custom_cake_requests").delete().eq("id", seededRequestId);
+        } catch (cleanupErr) {
+          console.error("  WARNING: failed to clean up seeded test request:", cleanupErr);
+        }
+      }
+    }
+  }
+
+  // --- 15. Staff Custom Cake Notification Deep Link (Issue C) ---
+  console.log("\n--- 15. Staff Custom Cake Notification Deep Link (Issue C) ---");
+
+  const staffDashboardSrc = fs.readFileSync(
+    path.join(process.cwd(), "components/staff/staff-dashboard.tsx"),
+    "utf8"
+  );
+
+  // The detail panel's selection must be resolved from the COMPLETE loaded collection,
+  // not the date/filter-limited list view -- this is the structural fix that makes the
+  // drawer open reliably on a deep link regardless of whether the filter/date state
+  // adjustment (also applied this same render, below) has already been read by this
+  // memo. Matching against customCakeRequestsForView here was the original bug.
+  const selectedCustomCakeMemoMatch = staffDashboardSrc.match(
+    /const selectedCustomCake = React\.useMemo\(\(\) => \{([\s\S]*?)\}, \[([\s\S]*?)\]\);/
+  );
+  assert(
+    Boolean(selectedCustomCakeMemoMatch) &&
+      selectedCustomCakeMemoMatch![1].includes("customCakeRequests.find(") &&
+      !selectedCustomCakeMemoMatch![1].includes("customCakeRequestsForView"),
+    "Custom Cake #C: Selected request is resolved from the complete customCakeRequests collection, not the filtered/dated list view"
+  );
+
+  // The deep-link sync runs during render using React's documented "adjust state while
+  // rendering" pattern (not an effect, and not gated behind the filter/date being
+  // pre-applied), so applying the tab/filter/date/selection together can never be
+  // split across renders in a way that lets a selection be cleared before it ever
+  // appears onscreen.
+  assert(
+    staffDashboardSrc.includes('if (deepLinkKey !== appliedDeepLinkKey && (!deepLinkMissing || deepLinkGaveUp)) {') &&
+      staffDashboardSrc.includes("setSelectedCustomCakeId(deepLinkRequest.id);"),
+    "Custom Cake #C: Deep-link tab/filter/date/selection are applied together as soon as the record is found or given up on"
+  );
+
+  // A missing linked record retries exactly once (router.refresh, tracked via a ref
+  // read only inside the effect, never during render) before giving up -- it never
+  // spins forever on a record that does not exist or is not accessible, and "give up"
+  // is read during render from state, not from the ref directly (which React disallows).
+  assert(
+    staffDashboardSrc.includes("refreshAttemptedKeyRef.current !== deepLinkKey") &&
+      staffDashboardSrc.includes("setDeepLinkGaveUpKey(deepLinkKey)") &&
+      staffDashboardSrc.includes("const deepLinkGaveUp = deepLinkMissing && deepLinkGaveUpKey === deepLinkKey;"),
+    "Custom Cake #C: A genuinely missing/inaccessible deep-linked request retries once via router.refresh() then gives up instead of looping"
+  );
+
+  // The cleanup that drops a selection must only fire for a record that is truly gone
+  // from the complete collection (e.g. deleted) -- not merely out of the active
+  // filter/date view, which is what let it race the deep link in the original bug.
+  assert(
+    /if \(selectedCustomCakeId && !selectedCustomCake\) \{\s*setSelectedCustomCakeId\(null\);/.test(staffDashboardSrc),
+    "Custom Cake #C: A selection is only dropped once its record no longer exists in the full collection at all"
+  );
+
+  // Manual selection/closing handlers are untouched by this fix.
+  assert(
+    staffDashboardSrc.includes("const handleSelectCustomCake = (req: CustomCakeRequest | null) => {") &&
+      staffDashboardSrc.includes("const handleCloseCustomCake = () => {"),
+    "Custom Cake #C: Normal manual selection and closing handlers are preserved"
+  );
+
+  // --- 16. Pickup Slot Badge Labels Match Configured Duration & Reason (#97) ---
+  console.log("\n--- 16. Pickup Slot Badge Labels Match Configured Duration & Reason (#97) ---");
+
+  assert(
+    getSlotBadgeLabel("Slot is full") === "Full",
+    "Pickup #97: A full slot is labeled 'Full', not 'Prep'"
+  );
+  assert(
+    getSlotBadgeLabel("Slot passed") === "Passed",
+    "Pickup #97: A past slot is labeled 'Passed'"
+  );
+  assert(
+    getSlotBadgeLabel(undefined) === "Unavailable" &&
+      getSlotBadgeLabel("Requires 2h preparation") === "Unavailable" &&
+      getSlotBadgeLabel("") === "Unavailable",
+    "Pickup #97: Any other or missing reason falls back to a generic 'Unavailable', never fabricating 'Prep'"
+  );
+
+  const slotPickerSrc97 = fs.readFileSync(
+    path.join(process.cwd(), "components/pickup/pickup-slot-picker.tsx"),
+    "utf8"
+  );
+  assert(
+    slotPickerSrc97.includes("getSlotBadgeLabel(slot.disabledReason)") &&
+      !slotPickerSrc97.includes('"Prep"'),
+    "Pickup #97: The slot picker renders the badge via getSlotBadgeLabel and no longer hardcodes 'Prep'"
+  );
+
+  // formatPickupSlot already honours the configured slot duration end-to-end via
+  // getAvailablePickupSlots (verified in section 11); confirm the label itself reflects
+  // each of the three supported durations rather than always assuming 30 minutes.
+  assert(
+    formatPickupSlot("2026-11-20T10:00:00+05:30", 15) === "10:00 AM – 10:15 AM" &&
+      formatPickupSlot("2026-11-20T10:00:00+05:30", 30) === "10:00 AM – 10:30 AM" &&
+      formatPickupSlot("2026-11-20T10:00:00+05:30", 60) === "10:00 AM – 11:00 AM",
+    "Pickup #97: formatPickupSlot renders the actual configured duration (15/30/60 min), not a fixed 30-minute window"
+  );
+
+  // --- 17. Custom Cake Staff Modal Uses IST, Not The Device Timezone (#84) ---
+  console.log("\n--- 17. Custom Cake Staff Modal Uses IST, Not The Device Timezone (#84) ---");
+
+  const initialTz84 = process.env.TZ;
+  try {
+    // A known instant: 2026-11-20 18:45 IST = 13:15 UTC
+    const sampleIso = "2026-11-20T13:15:00.000Z";
+
+    for (const tz of ["Asia/Kolkata", "America/Los_Angeles", "Pacific/Kiritimati", "UTC"]) {
+      process.env.TZ = tz;
+      assert(
+        toIstLocalInputValue(sampleIso) === "2026-11-20T18:45",
+        `Pickup #84: toIstLocalInputValue renders the IST wall-clock time under TZ=${tz}`
+      );
+    }
+  } finally {
+    process.env.TZ = initialTz84;
+  }
+
+  try {
+    for (const tz of ["Asia/Kolkata", "America/Los_Angeles", "Pacific/Kiritimati", "UTC"]) {
+      process.env.TZ = tz;
+      const parsed = parseIstLocalInputValue("2026-11-20T18:45");
+      assert(
+        parsed.toISOString() === "2026-11-20T13:15:00.000Z",
+        `Pickup #84: parseIstLocalInputValue interprets the value as IST wall-clock time under TZ=${tz}, not the device timezone`
+      );
+    }
+  } finally {
+    process.env.TZ = initialTz84;
+  }
+
+  assert(
+    toIstLocalInputValue(parseIstLocalInputValue("2026-01-15T09:05")) === "2026-01-15T09:05",
+    "Pickup #84: toIstLocalInputValue and parseIstLocalInputValue round-trip the same wall-clock value"
+  );
+
+  const staffModalSrc84 = fs.readFileSync(
+    path.join(process.cwd(), "components/staff/staff-custom-cake-modal.tsx"),
+    "utf8"
+  );
+  assert(
+    staffModalSrc84.includes("toIstLocalInputValue(request.preferred_pickup_at)") &&
+      !staffModalSrc84.includes(".getHours()") &&
+      !staffModalSrc84.includes(".getMonth()"),
+    "Custom Cake #84: The pre-filled pickup input is built from IST, not device-local Date getters"
+  );
+  assert(
+    staffModalSrc84.includes("parseIstLocalInputValue(pickupAt)"),
+    "Custom Cake #84: A staff-edited pickup time is parsed as IST wall-clock time, not device-local time"
+  );
+  assert(
+    staffModalSrc84.includes("formatIstDateTime(request.preferred_pickup_at)") &&
+      !staffModalSrc84.includes('toLocaleString("en-IN"'),
+    "Custom Cake #84: The customer's requested pickup time is displayed in IST, not the device's locale/timezone default"
+  );
+
+  // --- 18. Weekday Unarchive Restores The Correct Prior Hours (#87) ---
+  console.log("\n--- 18. Weekday Unarchive Restores The Correct Prior Hours (#87) ---");
+
+  const adminActionsSrc87 = fs.readFileSync(
+    path.join(process.cwd(), "lib/admin/actions.ts"),
+    "utf8"
+  );
+  assert(
+    adminActionsSrc87.includes('.from("audit_logs")') &&
+      adminActionsSrc87.includes('.select("before_data")') &&
+      adminActionsSrc87.includes('.eq("entity_type", "business_hours")') &&
+      adminActionsSrc87.includes('.order("created_at"'),
+    "Admin #87: unarchiveBusinessHourAction queries the real audit_logs table and columns (entity_type/before_data/created_at)"
+  );
+  assert(
+    !adminActionsSrc87.includes('.from("audit_log")') &&
+      !adminActionsSrc87.includes('"old_data"') &&
+      !adminActionsSrc87.includes('"performed_at"'),
+    "Admin #87: the non-existent audit_log/old_data/performed_at names are gone"
+  );
+
+  const localSupabaseEnv87 = getLocalSupabaseEnv();
+  if (!localSupabaseEnv87) {
+    console.log(
+      "  SKIPPED: local Supabase is not reachable (run `npx supabase start`). Issue #87 was not verified against a live database this run."
+    );
+  } else {
+    const admin87 = createSupabaseClient(localSupabaseEnv87.url, localSupabaseEnv87.secretKey);
+    let backedUpHour: { id: string; weekday: number; opens: string; closes: string } | null = null;
+
+    try {
+      const { data: location } = await admin87
+        .from("locations")
+        .select("id")
+        .eq("slug", DEFAULT_LOCATION_SLUG)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!location) {
+        console.log("  SKIPPED: local Supabase has no active location seeded; Issue #87 was not verified this run.");
+      } else {
+        // Use a distinctive, clearly-marked test time window on an existing configured
+        // weekday so this can never be confused with the bakery's real hours, and so it
+        // can be restored exactly afterward regardless of test outcome.
+        const { data: existingHours } = await admin87
+          .from("business_hours")
+          .select("id, weekday, opens, closes")
+          .eq("location_id", location.id)
+          .limit(1);
+
+        if (!existingHours || existingHours.length === 0) {
+          console.log("  SKIPPED: local Supabase has no business_hours configured; Issue #87 was not verified this run.");
+        } else {
+          backedUpHour = existingHours[0];
+          const { weekday, opens, closes } = backedUpHour;
+
+          // "Archive": delete the row. The audit_hours trigger captures this exact
+          // row (including opens/closes) into audit_logs.before_data.
+          const { error: deleteError } = await admin87
+            .from("business_hours")
+            .delete()
+            .eq("id", backedUpHour.id);
+
+          if (deleteError) {
+            assert(false, "Admin #87: archiving (deleting) the business_hours row succeeds", deleteError.message);
+          } else {
+            // The exact query unarchiveBusinessHourAction now runs.
+            const { data: auditEntries, error: auditError } = await admin87
+              .from("audit_logs")
+              .select("before_data")
+              .eq("entity_type", "business_hours")
+              .order("created_at", { ascending: false })
+              .limit(20);
+
+            assert(
+              !auditError && Array.isArray(auditEntries),
+              "Admin #87: the corrected audit_logs query succeeds against the real local schema"
+            );
+
+            const match = (auditEntries ?? []).find((entry) => {
+              const data = entry.before_data as Record<string, unknown> | null;
+              return data && data.location_id === location.id && Number(data.weekday) === weekday;
+            });
+
+            assert(
+              Boolean(match?.before_data),
+              "Admin #87: the just-deleted weekday's prior hours are found in audit_logs"
+            );
+
+            if (match?.before_data) {
+              const before = match.before_data as Record<string, string>;
+              assert(
+                before.opens?.slice(0, 5) === opens.slice(0, 5) &&
+                  before.closes?.slice(0, 5) === closes.slice(0, 5),
+                "Admin #87: the restored hours match the EXACT hours that were archived, not the 10:00-21:30 default"
+              );
+            }
+
+            // Restore the original row exactly (cleanup, regardless of assertion outcome below).
+            const { error: restoreError } = await admin87.from("business_hours").insert({
+              location_id: location.id,
+              weekday,
+              opens,
+              closes,
+            });
+            if (restoreError) {
+              console.error("  WARNING: failed to restore original business_hours row:", restoreError.message);
+            } else {
+              backedUpHour = null; // restored successfully; finally block does not need to re-restore
+            }
+          }
+        }
+      }
+    } finally {
+      // Safety net: if anything above threw before the restore ran, put the original row back.
+      if (backedUpHour) {
+        try {
+          await admin87.from("business_hours").insert({
+            location_id: (
+              await admin87.from("locations").select("id").eq("slug", DEFAULT_LOCATION_SLUG).maybeSingle()
+            ).data?.id,
+            weekday: backedUpHour.weekday,
+            opens: backedUpHour.opens,
+            closes: backedUpHour.closes,
+          });
+        } catch (restoreErr) {
+          console.error("  WARNING: failed to restore original business_hours row after an error:", restoreErr);
+        }
+      }
+    }
+  }
+
+  // --- 19. Paused Ordering Is Visible Before Final Submit, Not Just At It (#74) ---
+  console.log("\n--- 19. Paused Ordering Is Visible Before Final Submit, Not Just At It (#74) ---");
+
+  const hookSrc74 = fs.readFileSync(path.join(process.cwd(), "lib/pickup/use-store-status.ts"), "utf8");
+  assert(
+    hookSrc74.includes("getStoreStatus()") && hookSrc74.includes("isPaused"),
+    "Paused #74: useOrderingPausedStatus is backed by the real, location-scoped getStoreStatus()"
+  );
+
+  const bannerSrc74 = fs.readFileSync(
+    path.join(process.cwd(), "components/store/ordering-paused-banner.tsx"),
+    "utf8"
+  );
+  assert(
+    bannerSrc74.includes("if (!status.checked || !status.isPaused) return null;"),
+    "Paused #74: the banner renders nothing until checked, and nothing when not paused"
+  );
+
+  const pickupSelectorSrc74 = fs.readFileSync(
+    path.join(process.cwd(), "components/pickup/pickup-selector.tsx"),
+    "utf8"
+  );
+  assert(
+    pickupSelectorSrc74.includes("useOrderingPausedStatus()") &&
+      pickupSelectorSrc74.includes("<OrderingPausedBanner"),
+    "Paused #74: the pickup selector (shown in cart) surfaces the paused banner"
+  );
+
+  const cartViewSrc74 = fs.readFileSync(path.join(process.cwd(), "components/cart/cart-view.tsx"), "utf8");
+  assert(
+    (cartViewSrc74.match(/pickupDate && pickupSlot && !pausedStatus\.isPaused/g) || []).length === 2,
+    "Paused #74: both 'Proceed to Checkout' buttons (desktop and sticky mobile bar) are blocked while paused"
+  );
+
+  const checkoutFormSrc74 = fs.readFileSync(
+    path.join(process.cwd(), "components/checkout/checkout-form.tsx"),
+    "utf8"
+  );
+  assert(
+    checkoutFormSrc74.includes("disabled={!isPickupValid || isSubmitting || hasCartIssues || pausedStatus.isPaused}"),
+    "Paused #74: 'Place Order' is disabled while ordering is paused, not just on invalid pickup/cart state"
+  );
+
+  const customCakeFormSrc74 = fs.readFileSync(
+    path.join(process.cwd(), "components/custom-cake/custom-cake-form.tsx"),
+    "utf8"
+  );
+  assert(
+    customCakeFormSrc74.includes("disabled={isSubmitting || pausedStatus.isPaused}"),
+    "Paused #74: the custom cake enquiry submit button is also disabled while ordering is paused"
+  );
+
+  // --- 20. Issue #76 Regression: Cart-Change Pickup Revalidation Remains Intact ---
+  console.log("\n--- 20. Issue #76 Regression: Cart-Change Pickup Revalidation Remains Intact ---");
+  // #76 was already implemented and covered by section "Pickup Slot Revalidation After
+  // Cart Changes (#76)" earlier in this run (~26 assertions). This section only confirms
+  // the files this implementation cycle touched did not regress its wiring.
+  const cartContextSrc76 = fs.readFileSync(path.join(process.cwd(), "lib/cart/context.tsx"), "utf8");
+  assert(
+    cartContextSrc76.includes("validatePickupSlotAction(") &&
+      cartContextSrc76.includes("getLeadSignature(state.items)") &&
+      cartContextSrc76.includes("INVALIDATE_PICKUP_SLOT"),
+    "Issue #76: the cart's slot-revalidation effect is unchanged by this implementation cycle"
+  );
+
+  console.log("\n========================================================");
+  console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
+  console.log("========================================================\n");
+
+  if (failedCount > 0) {
+    process.exit(1);
+  }
+})();

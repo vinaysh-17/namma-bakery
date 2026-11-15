@@ -177,6 +177,30 @@ export function getIstTimeParts(input: Date | string | number = new Date()): {
 }
 
 /**
+ * Formats an ISO timestamp as a "YYYY-MM-DDTHH:mm" value for a <input type="datetime-local">,
+ * expressed in Asia/Kolkata (IST) rather than the browser/device's local timezone (GitHub
+ * issue #84): the bakery's business times are always IST regardless of where a staff member
+ * or customer's device happens to be.
+ */
+export function toIstLocalInputValue(input: Date | string | number): string {
+  const date = toValidDate(input);
+  const { hour, minute } = getIstTimeParts(date);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${getIstDateString(date)}T${pad(hour)}:${pad(minute)}`;
+}
+
+/**
+ * Parses a "YYYY-MM-DDTHH:mm" <input type="datetime-local"> value as IST wall-clock time
+ * (matching how toIstLocalInputValue produced it), not the browser/device's local timezone
+ * (GitHub issue #84). Asia/Kolkata has no daylight-saving transitions, so the +05:30 offset
+ * is always correct, matching the same technique used elsewhere in this codebase (e.g.
+ * lib/custom-cake/actions.ts's buildIstPickupIso).
+ */
+export function parseIstLocalInputValue(value: string): Date {
+  return new Date(`${value}:00+05:30`);
+}
+
+/**
  * Helper to parse a "HH:MM" or "HH:MM:SS" time string to minutes past midnight.
  */
 function parseTimeToMinutes(timeStr: string): number {

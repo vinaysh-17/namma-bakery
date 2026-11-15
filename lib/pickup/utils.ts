@@ -203,3 +203,20 @@ export function formatPickupSelectionSummary(
 
   return fullDate;
 }
+
+/**
+ * Short badge label for a disabled pickup slot (GitHub issue #97). The real
+ * getAvailablePickupSlots() only ever sets disabledReason to "Slot is full" (capacity)
+ * or "Slot passed" -- any other value is an unrecognised future reason, which must not
+ * be mislabeled as "Prep" (a leftover label from the removed generator fallback).
+ */
+export function getSlotBadgeLabel(disabledReason: string | undefined): string {
+  switch (disabledReason) {
+    case "Slot passed":
+      return "Passed";
+    case "Slot is full":
+      return "Full";
+    default:
+      return "Unavailable";
+  }
+}

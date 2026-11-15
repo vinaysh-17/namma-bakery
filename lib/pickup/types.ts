@@ -72,4 +72,24 @@ export interface StoreStatus {
   isPaused: boolean;
   pauseMessage?: string | null;
   slotMinutes: number;
+  error?: string;
+}
+
+export interface AvailablePickupSlotsResult {
+  slots: PickupSlot[];
+  isClosed: boolean;
+  closureReason?: string | null;
+  error?: "SLOT_FETCH_FAILED" | "INVALID_SLOT_DURATION" | "LOCATION_NOT_FOUND" | "INVALID_DATE" | string;
+}
+
+export interface PickupScheduleWindow {
+  /**
+   * Weekdays (0=Sunday..6=Saturday) with no business_hours entry for the location.
+   */
+  closedWeekdays: number[];
+  /**
+   * Map of "YYYY-MM-DD" -> closure reason for special_closures within the requested window.
+   */
+  specialClosures: Record<string, string>;
+  error?: "SCHEDULE_FETCH_FAILED" | "LOCATION_NOT_FOUND";
 }

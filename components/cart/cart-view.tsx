@@ -12,6 +12,7 @@ import {
 } from "@/lib/menu/utils";
 import { PickupSelector } from "@/components/pickup/pickup-selector";
 import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
+import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
 
 export function CartView() {
   const {
@@ -27,6 +28,10 @@ export function CartView() {
     removeItem,
     clearCart,
   } = useCart();
+
+  // Paused-ordering status (#74): blocks "Proceed to Checkout" with a clear reason
+  // instead of letting the customer continue only to fail at the final submit.
+  const pausedStatus = useOrderingPausedStatus();
 
   // Handle SSR and hydration gracefully
   if (!isHydrated) {
@@ -300,7 +305,7 @@ export function CartView() {
 
             {/* Proceed to Checkout Action */}
             <div className="mt-6 flex flex-col gap-2.5">
-              {pickupDate && pickupSlot ? (
+              {pickupDate && pickupSlot && !pausedStatus.isPaused ? (
                 <Link
                   href="/checkout"
                   className="flex h-12 w-full items-center justify-center rounded-sm bg-caramel text-sm font-semibold text-white shadow-sm transition-colors hover:bg-caramel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
@@ -313,7 +318,9 @@ export function CartView() {
                   disabled
                   className="flex h-12 w-full items-center justify-center rounded-sm bg-muted text-sm font-semibold text-muted-foreground cursor-not-allowed"
                 >
-                  Select a Pickup Slot to Continue
+                  {pausedStatus.isPaused
+                    ? "Online Ordering Paused"
+                    : "Select a Pickup Slot to Continue"}
                 </button>
               )}
 
@@ -362,7 +369,7 @@ export function CartView() {
             )}
           </div>
 
-          {pickupDate && pickupSlot ? (
+          {pickupDate && pickupSlot && !pausedStatus.isPaused ? (
             <Link
               href="/checkout"
               className="flex min-h-[48px] h-12 w-full items-center justify-center rounded-sm bg-caramel text-sm font-semibold text-white shadow-sm transition-colors hover:bg-caramel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
@@ -375,7 +382,9 @@ export function CartView() {
               disabled
               className="flex min-h-[48px] h-12 w-full items-center justify-center rounded-sm bg-muted text-xs sm:text-sm font-semibold text-muted-foreground cursor-not-allowed"
             >
-              Select a Pickup Slot to Continue
+              {pausedStatus.isPaused
+                ? "Online Ordering Paused"
+                : "Select a Pickup Slot to Continue"}
             </button>
           )}
         </div>

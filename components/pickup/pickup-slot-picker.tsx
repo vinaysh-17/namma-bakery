@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Check, Clock, AlertCircle } from "lucide-react";
 import type { PickupSlot } from "@/lib/pickup/types";
+import { getSlotBadgeLabel } from "@/lib/pickup/utils";
 
 interface PickupSlotPickerProps {
   slots: PickupSlot[];
@@ -109,7 +110,7 @@ export function PickupSlotPicker({
                   <Check className="h-4 w-4 text-caramel shrink-0" aria-hidden="true" />
                 ) : !slot.isAvailable && slot.disabledReason ? (
                   <span className="no-underline text-[10px] text-muted-foreground/60 shrink-0 font-normal ml-1">
-                    {slot.disabledReason === "Slot passed" ? "Passed" : "Prep"}
+                    {getSlotBadgeLabel(slot.disabledReason)}
                   </span>
                 ) : null}
               </button>

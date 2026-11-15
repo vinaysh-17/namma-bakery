@@ -27,6 +27,8 @@ import { CartChangesNotice } from "./cart-changes-notice";
 import { validatePickupSlotAction } from "@/lib/pickup/actions";
 import { describeInvalidSlot } from "@/lib/pickup/slot-validity";
 import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
+import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
+import { OrderingPausedBanner } from "@/components/store/ordering-paused-banner";
 
 // Codes returned by placeOrderAction when the chosen pickup time cannot be used (#76)
 const PICKUP_TIME_CODES = new Set([
@@ -71,6 +73,12 @@ export function CheckoutForm() {
   const cartValidation = useCartValidation(items, isHydrated && !isEmpty);
   const cartIssues = cartValidation.issues;
   const hasCartIssues = cartIssues.length > 0;
+
+  // Paused-ordering status (#74): blocks final submission with a clear reason instead
+  // of letting placeOrderAction fail with ORDERS_PAUSED only after the customer submits.
+  // Called unconditionally here (before the isHydrated/isEmpty early returns below) so
+  // hook call order never varies between renders.
+  const pausedStatus = useOrderingPausedStatus();
 
   const [formData, setFormData] = React.useState<CustomerDetailsFormInput>({
     customerName: "",
@@ -341,6 +349,9 @@ export function CheckoutForm() {
         </div>
       )}
 
+      {/* Online ordering paused by the bakery (#74) */}
+      <OrderingPausedBanner status={pausedStatus} className="mb-6" />
+
       {/* Live menu changes (#75): price changes and unavailable items */}
       <CartChangesNotice
         issues={cartIssues}
@@ -427,9 +438,9 @@ export function CheckoutForm() {
 
               <button
                 type="submit"
-                disabled={!isPickupValid || isSubmitting || hasCartIssues}
+                disabled={!isPickupValid || isSubmitting || hasCartIssues || pausedStatus.isPaused}
                 className={`flex h-12 w-full items-center justify-center gap-2 rounded-sm text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
-                  isPickupValid && !isSubmitting && !hasCartIssues
+                  isPickupValid && !isSubmitting && !hasCartIssues && !pausedStatus.isPaused
                     ? "bg-caramel text-white shadow-sm hover:bg-caramel/90 active:scale-[0.99]"
                     : "cursor-not-allowed bg-muted text-muted-foreground"
                 }`}
@@ -443,11 +454,13 @@ export function CheckoutForm() {
                   <>
                     <ShoppingBag className="h-4 w-4" aria-hidden="true" />
                     <span>
-                      {!isPickupValid
-                        ? "Select Pickup Slot to Continue"
-                        : hasCartIssues
-                          ? "Review Cart Changes to Continue"
-                          : "Place Order (Pay at Bakery)"}
+                      {pausedStatus.isPaused
+                        ? "Online Ordering Paused"
+                        : !isPickupValid
+                          ? "Select Pickup Slot to Continue"
+                          : hasCartIssues
+                            ? "Review Cart Changes to Continue"
+                            : "Place Order (Pay at Bakery)"}
                     </span>
                   </>
                 )}

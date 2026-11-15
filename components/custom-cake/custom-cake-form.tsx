@@ -26,6 +26,8 @@ import {
   customCakePickupDateSchema,
   getEarliestCustomCakePickupDate,
 } from "@/lib/custom-cake/validation";
+import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
+import { OrderingPausedBanner } from "@/components/store/ordering-paused-banner";
 import { cn } from "@/lib/utils";
 
 const CAKE_OCCASIONS = [
@@ -113,6 +115,10 @@ export function CustomCakeForm() {
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   const dragCounterRef = React.useRef(0);
+
+  // Paused-ordering status (#74): blocks submission with a clear reason instead of
+  // letting submit_custom_request fail with ORDERS_PAUSED only after the customer submits.
+  const pausedStatus = useOrderingPausedStatus();
 
   // UI state
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -543,6 +549,9 @@ export function CustomCakeForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8" noValidate>
+      {/* Online ordering paused by the bakery (#74) */}
+      <OrderingPausedBanner status={pausedStatus} />
+
       {/* Important Business Rule Notice */}
       <div
         role="note"
@@ -1259,7 +1268,7 @@ export function CustomCakeForm() {
         )}
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isSubmitting || pausedStatus.isPaused}
           className="flex h-12 w-full sm:w-auto sm:min-w-[280px] items-center justify-center gap-2 rounded-sm bg-caramel text-sm font-semibold text-white shadow-none transition-colors hover:bg-caramel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground mx-auto"
         >
           {isSubmitting ? (
@@ -1267,6 +1276,8 @@ export function CustomCakeForm() {
               <Loader2 className="size-4 animate-spin" />
               <span>Submitting Your Request...</span>
             </>
+          ) : pausedStatus.isPaused ? (
+            <span>Online Ordering Paused</span>
           ) : (
             <>
               <CheckCircle2 className="size-4" />
