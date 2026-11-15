@@ -1,9 +1,11 @@
 "use server";
 
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertAdminSession } from "./auth";
+import { validateImageMagicBytes } from "@/lib/custom-cake/validation";
 import {
   adminCategorySchema,
   adminProductSchema,
@@ -266,7 +268,18 @@ export async function upsertProductAction(
     if (id) {
       const { error } = await supabase.from("products").update(payload).eq("id", id);
       if (error) {
-        return { success: false, error: error.message };
+        if (
+          error.code === "23505" ||
+          error.message.includes("products_slug_key") ||
+          (error.message.includes("unique") && error.message.includes("slug"))
+        ) {
+          return {
+            success: false,
+            error:
+              "A product with this URL slug or name already exists. Please choose a distinct name or adjust the URL slug.",
+          };
+        }
+        return { success: false, error: "Failed to update product." };
       }
       revalidatePath("/admin");
       revalidatePath("/menu");
@@ -279,7 +292,18 @@ export async function upsertProductAction(
         .single();
 
       if (error || !inserted) {
-        return { success: false, error: error?.message || "Failed to create product." };
+        if (
+          error?.code === "23505" ||
+          error?.message.includes("products_slug_key") ||
+          (error?.message.includes("unique") && error?.message.includes("slug"))
+        ) {
+          return {
+            success: false,
+            error:
+              "A product with this URL slug or name already exists. Please choose a distinct name or adjust the URL slug.",
+          };
+        }
+        return { success: false, error: "Failed to create product." };
       }
       revalidatePath("/admin");
       revalidatePath("/menu");
@@ -289,7 +313,7 @@ export async function upsertProductAction(
     console.error("[upsertProductAction] Error:", err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Failed to save product.",
+      error: "Failed to save product.",
     };
   }
 }
@@ -401,6 +425,270 @@ export async function deleteProductAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to delete product.",
+    };
+  }
+}
+
+// ---------------------------------------------------------------- PRODUCT IMAGES (#90, #M-2, #L-1, #L-2)
+
+export async function uploadProductImageAction(
+  formData: FormData
+): Promise<AdminActionResult<{ id: string; storage_path: string; url: string }>> {
+  try {
+    await assertAdminSession();
+
+    const productId = formData.get("productId");
+    const file = formData.get("file") as File | null;
+    const rawAltText = formData.get("altText");
+    const isPrimaryParam = formData.get("isPrimary");
+
+    // L-1: Validate productId format with Zod UUID schema
+    const idValidation = z.string().uuid("Invalid product ID.").safeParse(productId);
+    if (!idValidation.success) {
+      return { success: false, error: "Invalid product ID." };
+    }
+    const validProductId = idValidation.data;
+
+    if (!file || !(file instanceof File) || file.size === 0) {
+      return { success: false, error: "Please select an image file to upload." };
+    }
+
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    if (file.size > MAX_FILE_SIZE) {
+      return { success: false, error: "Image file exceeds 5MB limit. Please choose a smaller photo." };
+    }
+
+    const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      return { success: false, error: "Only JPEG, PNG, and WebP images are supported." };
+    }
+
+    // Binary magic byte validation to prevent MIME/extension spoofing
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (!validateImageMagicBytes(buffer)) {
+      return {
+        success: false,
+        error: "The uploaded image is invalid or corrupted. Please upload a valid PNG, JPEG, or WebP photo.",
+      };
+    }
+
+    // L-2: Alt text validation (trimmed and clamped to 200 characters)
+    const sanitizedAltText =
+      typeof rawAltText === "string" ? rawAltText.trim().slice(0, 200) : "";
+
+    const supabase = await createClient();
+
+    // Verify product exists in database
+    const { data: product, error: prodErr } = await supabase
+      .from("products")
+      .select("id, name")
+      .eq("id", validProductId)
+      .maybeSingle();
+
+    if (prodErr || !product) {
+      return { success: false, error: "Product not found." };
+    }
+
+    // Inspect existing images for this product
+    const { data: existingImages, error: fetchErr } = await supabase
+      .from("product_images")
+      .select("id, is_primary, sort_order")
+      .eq("product_id", validProductId)
+      .order("sort_order", { ascending: true });
+
+    if (fetchErr) {
+      return { success: false, error: "Failed to check existing product photos." };
+    }
+
+    const shouldBePrimary =
+      isPrimaryParam !== null ? isPrimaryParam === "true" : (existingImages?.length ?? 0) === 0;
+
+    const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+    const storagePath = `products/${validProductId}/${crypto.randomUUID()}.${ext}`;
+
+    // M-2 Step 1: Upload new binary file to Supabase Storage FIRST before any database mutations.
+    // If storage upload fails, existing database image records remain completely untouched.
+    const { error: uploadError } = await supabase.storage
+      .from("product-images")
+      .upload(storagePath, buffer, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("[uploadProductImageAction] Storage upload error:", uploadError);
+      return { success: false, error: "Failed to upload image file to storage." };
+    }
+
+    // M-2 Step 2: Storage succeeded. Demote current primary if needed to satisfy unique index product_images_one_primary.
+    let demotedOldPrimaryId: string | null = null;
+    if (shouldBePrimary && existingImages && existingImages.length > 0) {
+      const currentPrimary = existingImages.find((img) => img.is_primary);
+      if (currentPrimary) {
+        demotedOldPrimaryId = currentPrimary.id;
+        const { error: demoteErr } = await supabase
+          .from("product_images")
+          .update({ is_primary: false })
+          .eq("id", currentPrimary.id);
+
+        if (demoteErr) {
+          console.error("[uploadProductImageAction] Demote error:", demoteErr);
+          // Rollback newly uploaded storage file
+          try {
+            await supabase.storage.from("product-images").remove([storagePath]);
+          } catch (cleanErr) {
+            console.warn("[uploadProductImageAction] Failed to clean up storage object on demote error:", cleanErr);
+          }
+          return { success: false, error: "Failed to update existing primary photo." };
+        }
+      }
+    }
+
+    const nextSortOrder =
+      existingImages && existingImages.length > 0
+        ? Math.max(...existingImages.map((img) => img.sort_order)) + 1
+        : 0;
+
+    // M-2 Step 3: Insert metadata record into product_images table.
+    const { data: inserted, error: insertError } = await supabase
+      .from("product_images")
+      .insert({
+        product_id: validProductId,
+        storage_path: storagePath,
+        alt_text: sanitizedAltText || `${product.name} photo`,
+        is_primary: shouldBePrimary,
+        sort_order: nextSortOrder,
+      })
+      .select("id, storage_path")
+      .single();
+
+    if (insertError || !inserted) {
+      console.error("[uploadProductImageAction] Database insert error:", insertError);
+      // Rollback newly uploaded storage file on database failure
+      try {
+        await supabase.storage.from("product-images").remove([storagePath]);
+      } catch (cleanErr) {
+        console.warn("[uploadProductImageAction] Failed to clean up storage object on insert error:", cleanErr);
+      }
+      // Restore previous primary if demoted
+      if (demotedOldPrimaryId) {
+        try {
+          await supabase.from("product_images").update({ is_primary: true }).eq("id", demotedOldPrimaryId);
+        } catch (restoreErr) {
+          console.error("[uploadProductImageAction] Failed to restore previous primary image:", restoreErr);
+        }
+      }
+      return { success: false, error: "Failed to save product image record." };
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/menu");
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/product-images/${storagePath}`;
+
+    return {
+      success: true,
+      data: {
+        id: inserted.id,
+        storage_path: inserted.storage_path,
+        url: publicUrl,
+      },
+    };
+  } catch (err) {
+    console.error("[uploadProductImageAction] Unexpected error:", err);
+    return {
+      success: false,
+      error: "Failed to upload product photo.",
+    };
+  }
+}
+
+export async function deleteProductImageAction(
+  imageId: string
+): Promise<AdminActionResult> {
+  try {
+    await assertAdminSession();
+
+    // L-1: Validate imageId format with Zod UUID schema
+    const idValidation = z.string().uuid("Invalid image ID.").safeParse(imageId);
+    if (!idValidation.success) {
+      return { success: false, error: "Invalid image ID." };
+    }
+    const validImageId = idValidation.data;
+
+    const supabase = await createClient();
+
+    // Verify legitimate product_images record exists
+    const { data: targetImage, error: fetchErr } = await supabase
+      .from("product_images")
+      .select("id, product_id, storage_path, is_primary")
+      .eq("id", validImageId)
+      .maybeSingle();
+
+    if (fetchErr || !targetImage) {
+      return { success: false, error: "Image record not found." };
+    }
+
+    const { product_id, storage_path, is_primary } = targetImage;
+
+    // Fetch remaining images for this product
+    const { data: remainingImages } = await supabase
+      .from("product_images")
+      .select("id, sort_order")
+      .eq("product_id", product_id)
+      .neq("id", validImageId)
+      .order("sort_order", { ascending: true });
+
+    // Delete database record first
+    const { error: deleteDbError } = await supabase
+      .from("product_images")
+      .delete()
+      .eq("id", validImageId);
+
+    if (deleteDbError) {
+      console.error("[deleteProductImageAction] Database delete error:", deleteDbError);
+      return { success: false, error: "Failed to delete product image record." };
+    }
+
+    // If deleted image was primary, promote next remaining image to primary
+    if (is_primary && remainingImages && remainingImages.length > 0) {
+      const nextPrimaryId = remainingImages[0].id;
+      const { error: promoteErr } = await supabase
+        .from("product_images")
+        .update({ is_primary: true })
+        .eq("id", nextPrimaryId);
+
+      if (promoteErr) {
+        console.error("[deleteProductImageAction] Failed to promote next primary image:", promoteErr);
+      }
+    }
+
+    // Remove file from storage
+    if (storage_path) {
+      try {
+        const { error: removeStorageError } = await supabase.storage
+          .from("product-images")
+          .remove([storage_path]);
+
+        if (removeStorageError) {
+          console.warn("[deleteProductImageAction] Failed to remove storage file:", removeStorageError);
+        }
+      } catch (storageErr) {
+        console.warn("[deleteProductImageAction] Storage cleanup exception:", storageErr);
+      }
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/menu");
+
+    return { success: true };
+  } catch (err) {
+    console.error("[deleteProductImageAction] Unexpected error:", err);
+    return {
+      success: false,
+      error: "Failed to delete product photo.",
     };
   }
 }
@@ -826,9 +1114,19 @@ export async function addSpecialClosureAction(
       .single();
 
     if (error || !inserted) {
+      if (
+        error?.code === "23505" ||
+        error?.message.includes("special_closures_location_id_closure_date_key") ||
+        (error?.message.includes("unique") && error?.message.includes("closure_date"))
+      ) {
+        return {
+          success: false,
+          error: "A closure date already exists for this date.",
+        };
+      }
       return {
         success: false,
-        error: error?.message || "Failed to add special closure date.",
+        error: "Failed to add special closure date.",
       };
     }
 
@@ -836,9 +1134,10 @@ export async function addSpecialClosureAction(
     revalidatePath("/checkout");
     return { success: true, data: { id: inserted.id } };
   } catch (err) {
+    console.error("[addSpecialClosureAction] Error:", err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Failed to add special closure date.",
+      error: "Failed to add special closure date.",
     };
   }
 }
@@ -855,15 +1154,19 @@ export async function removeSpecialClosureAction(
       .delete()
       .eq("id", closureId);
 
-    if (error) return { success: false, error: error.message };
+    if (error) {
+      console.error("[removeSpecialClosureAction] Error:", error);
+      return { success: false, error: "Failed to remove closure date." };
+    }
 
     revalidatePath("/admin");
     revalidatePath("/checkout");
     return { success: true };
   } catch (err) {
+    console.error("[removeSpecialClosureAction] Error:", err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Failed to remove closure date.",
+      error: "Failed to remove closure date.",
     };
   }
 }
@@ -894,11 +1197,19 @@ export async function updateSpecialClosureAction(
       .eq("id", rawInput.id);
 
     if (error) {
+      if (
+        error.code === "23505" ||
+        error.message.includes("special_closures_location_id_closure_date_key") ||
+        (error.message.includes("unique") && error.message.includes("closure_date"))
+      ) {
+        return {
+          success: false,
+          error: "A closure date already exists for this date.",
+        };
+      }
       return {
         success: false,
-        error: error.message.includes("unique") || error.code === "23505"
-          ? "A closure date already exists for this date."
-          : error.message || "Failed to update closure date.",
+        error: "Failed to update closure date.",
       };
     }
 
@@ -906,9 +1217,10 @@ export async function updateSpecialClosureAction(
     revalidatePath("/checkout");
     return { success: true };
   } catch (err) {
+    console.error("[updateSpecialClosureAction] Error:", err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Failed to update closure date.",
+      error: "Failed to update closure date.",
     };
   }
 }

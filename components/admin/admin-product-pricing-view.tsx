@@ -198,6 +198,8 @@ export function AdminProductPricingView({
     const res = await togglePriceTierRuleAction(rule.id, !rule.is_active);
     if (res.success) {
       onActionSuccess();
+    } else {
+      setErrorMessage(res.error || "Failed to update pricing rule.");
     }
   };
 
@@ -237,6 +239,23 @@ export function AdminProductPricingView({
           </button>
         )}
       </div>
+
+      {errorMessage && !isAddingRule && !editingRule && (
+        <div className="flex items-center justify-between p-2.5 rounded text-xs bg-destructive/10 text-destructive border border-destructive/20 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="size-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="p-1 rounded hover:bg-destructive/10 text-destructive cursor-pointer"
+            aria-label="Dismiss error"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
       {successMessage && (
         <div className="flex items-center gap-2 p-2.5 rounded text-xs bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">

@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { placeOrderInputSchema, lookupOrderTokenSchema } from "../lib/orders/validation";
 import {
   customCakeFormSchema,
@@ -45,6 +46,11 @@ import {
   adminStaffRoleSchema,
   createStaffMemberSchema,
 } from "../lib/admin/validation";
+import {
+  resolvePrimaryProductImage,
+  resolveGalleryImages,
+  findManifestImageBySlug,
+} from "../lib/menu/product-images";
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { createIdempotencyKey, IDEMPOTENCY_KEY_PATTERN } from "../lib/orders/idempotency";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
@@ -3662,6 +3668,386 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
   assert(
     !supabaseProxySrc.includes(".from(") && !supabaseProxySrc.includes("is_admin"),
     "Staff #99: proxy avoids database table/role queries to maintain sub-millisecond routing performance"
+  );
+
+  // --- 26. Batch 5: Admin Catalog & Media Resilience (#66, #71, #85, #86, #90) ---
+  console.log("\n--- 26. Batch 5: Admin Catalog & Media Resilience (#66, #71, #85, #86, #90) ---");
+
+  // 1. #66 Cake Price Tier Selection & Invariants
+  const sampleTierId = "c2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33";
+  const validTieredCake = {
+    category_id: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    name: "Red Velvet Tiered Cake",
+    slug: "red-velvet-tiered-cake",
+    kind: "TIERED_CAKE" as const,
+    price_tier_id: sampleTierId,
+    lead_time_minutes: 240,
+    requires_confirmation: true,
+  };
+  assert(
+    adminProductSchema.safeParse(validTieredCake).success,
+    "Catalog #66: adminProductSchema accepts valid TIERED_CAKE with price_tier_id"
+  );
+  assert(
+    !adminProductSchema.safeParse({ ...validTieredCake, price_tier_id: null }).success,
+    "Catalog #66: adminProductSchema strictly rejects TIERED_CAKE with null price_tier_id"
+  );
+  assert(
+    !adminProductSchema.safeParse({ ...validTieredCake, price_tier_id: undefined }).success,
+    "Catalog #66: adminProductSchema strictly rejects TIERED_CAKE with undefined price_tier_id"
+  );
+
+  const validSimpleProductTest = {
+    category_id: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    name: "Veg Samosa",
+    slug: "veg-samosa",
+    kind: "SIMPLE" as const,
+    price_tier_id: null,
+    lead_time_minutes: 60,
+    requires_confirmation: false,
+  };
+  assert(
+    adminProductSchema.safeParse(validSimpleProductTest).success,
+    "Catalog #66: adminProductSchema accepts valid SIMPLE product with price_tier_id: null"
+  );
+  assert(
+    !adminProductSchema.safeParse({ ...validSimpleProductTest, price_tier_id: sampleTierId }).success,
+    "Catalog #66: adminProductSchema strictly rejects SIMPLE product with price_tier_id assigned"
+  );
+
+  const catalogViewSrc = fs.readFileSync(path.join(process.cwd(), "components/admin/admin-catalog-view.tsx"), "utf8");
+  assert(
+    catalogViewSrc.includes('productFormData.kind === "TIERED_CAKE"') &&
+      catalogViewSrc.includes("Price Tier *") &&
+      catalogViewSrc.includes("Select a price tier..."),
+    "Catalog #66: Admin product form renders explicit Price Tier dropdown when product kind is TIERED_CAKE"
+  );
+  assert(
+    catalogViewSrc.includes("!productFormData.price_tier_id") &&
+      catalogViewSrc.includes("Please select a price tier for this tiered cake"),
+    "Catalog #66: Admin product form guards client submission against unselected price tier"
+  );
+
+  // 2. #71 Lead Time & Confirmation Controls
+  assert(
+    adminProductSchema.safeParse({ ...validSimpleProductTest, lead_time_minutes: 0 }).success,
+    "Catalog #71: adminProductSchema accepts express lead_time_minutes of 0"
+  );
+  assert(
+    adminProductSchema.safeParse({ ...validSimpleProductTest, lead_time_minutes: 60 }).success,
+    "Catalog #71: adminProductSchema accepts standard counter lead_time_minutes of 60"
+  );
+  assert(
+    !adminProductSchema.safeParse({ ...validSimpleProductTest, lead_time_minutes: -1 }).success,
+    "Catalog #71: adminProductSchema rejects negative lead_time_minutes"
+  );
+  assert(
+    adminProductSchema.safeParse({ ...validSimpleProductTest, requires_confirmation: true }).success &&
+      adminProductSchema.safeParse({ ...validSimpleProductTest, requires_confirmation: false }).success,
+    "Catalog #71: adminProductSchema accepts boolean requires_confirmation"
+  );
+
+  assert(
+    catalogViewSrc.includes("Lead Time (Minutes) *") &&
+      catalogViewSrc.includes("Requires Staff Review / Confirmation") &&
+      catalogViewSrc.includes("lead_time_minutes: Math.max(0,"),
+    "Catalog #71: Admin product form exposes interactive lead time input and requires_confirmation toggle"
+  );
+  assert(
+    catalogViewSrc.includes("lead_time_minutes: isCake ? 240 : 60") &&
+      catalogViewSrc.includes("requires_confirmation: isCake ? true : false"),
+    "Catalog #71: Admin product form applies context-aware defaults (60m/no review for counter, 240m/review for cake)"
+  );
+
+  // 3. #85 Duplicate Slug & Special Closure Error Mapping
+  const adminActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8");
+  assert(
+    adminActionsSrc.includes("products_slug_key") &&
+      adminActionsSrc.includes(
+        "A product with this URL slug or name already exists. Please choose a distinct name or adjust the URL slug."
+      ),
+    "Catalog #85: upsertProductAction maps PostgreSQL 23505 duplicate slug error to user-friendly message"
+  );
+  assert(
+    adminActionsSrc.includes("addSpecialClosureAction") &&
+      adminActionsSrc.includes("A closure date already exists for this date."),
+    "Catalog #85: addSpecialClosureAction maps duplicate date 23505 violation to friendly message matching update path"
+  );
+  assert(
+    catalogViewSrc.includes("URL Slug *") &&
+      catalogViewSrc.includes("isSlugManuallyEdited") &&
+      catalogViewSrc.includes("generateSlug(name)"),
+    "Catalog #85: Admin product form exposes editable URL Slug input with auto-generation from product name"
+  );
+
+  // 4. #86 Catalog Quick-Action and Pricing Error Visibility
+  assert(
+    catalogViewSrc.includes("Top-Level Quick-Action Error Banner (#86)") &&
+      catalogViewSrc.includes('role="alert"') &&
+      catalogViewSrc.includes(
+        "errorMessage && !isCreatingCategory && !editingCategory && !isCreatingProduct && !editingProduct"
+      ),
+    "Catalog #86: Admin catalog view renders persistent error alert banner for quick-action failures"
+  );
+  const pricingViewSrc = fs.readFileSync(
+    path.join(process.cwd(), "components/admin/admin-product-pricing-view.tsx"),
+    "utf8"
+  );
+  assert(
+    pricingViewSrc.includes('setErrorMessage(res.error || "Failed to update pricing rule.")') &&
+      pricingViewSrc.includes("errorMessage && !isAddingRule && !editingRule"),
+    "Catalog #86: Admin pricing view surfaces error banner when toggling price tier rule fails"
+  );
+
+  // 5. #90 Resilient Product Images & Admin Uploads
+  // 5a. Behavioral: uploaded database image takes priority over static manifest
+  const productWithUpload = {
+    slug: "black-forest",
+    name: "Black Forest",
+    category: { slug: "cakes", name: "Cakes" },
+    product_images: [
+      {
+        id: "img-custom-1",
+        product_id: "prod-1",
+        storage_path: "products/custom-bf.webp",
+        alt_text: "Custom Black Forest Photo",
+        sort_order: 0,
+        is_primary: true,
+      },
+    ],
+  };
+  const resolvedWithUpload = resolvePrimaryProductImage(productWithUpload);
+  assert(
+    !resolvedWithUpload.isLocal &&
+      resolvedWithUpload.url !== null &&
+      resolvedWithUpload.url.includes("products/custom-bf.webp"),
+    "Media #90: Uploaded Supabase product image takes top precedence over static manifest image"
+  );
+
+  // 5b. Behavioral: category resilience (moving a product to another category preserves its manifest photo)
+  const movedProduct = {
+    slug: "black-forest",
+    name: "Black Forest",
+    category: { slug: "seasonal-specials", name: "Seasonal Specials" },
+  };
+  const resolvedMoved = resolvePrimaryProductImage(movedProduct);
+  assert(
+    resolvedMoved.isLocal &&
+      resolvedMoved.url !== null &&
+      resolvedMoved.url.includes("cakes/black-forest.webp"),
+    "Media #90: Category-resilient lookup preserves product photo even when category slug changes"
+  );
+
+  // 5c. Behavioral: unmapped product with no photos returns null
+  const unmappedProduct = {
+    slug: "brand-new-fusion-cake-xyz",
+    name: "Brand New Fusion Cake XYZ",
+    category: { slug: "specials", name: "Specials" },
+  };
+  const resolvedUnmapped = resolvePrimaryProductImage(unmappedProduct);
+  assert(
+    resolvedUnmapped.url === null && resolvedUnmapped.isLocal === false,
+    "Media #90: Unmapped product with no uploaded or manifest photo cleanly resolves to null placeholder"
+  );
+
+  // 5d. Behavioral: findManifestImageBySlug helper
+  assert(
+    findManifestImageBySlug("black-forest") === "/images/products/optimized/cakes/black-forest.webp" &&
+      findManifestImageBySlug("veggie-paradise-pizza") ===
+        "/images/products/optimized/mini-pizzas/veggie-paradise-pizza.webp" &&
+      findManifestImageBySlug("non-existent-snack") === null,
+    "Media #90: findManifestImageBySlug correctly resolves assets across arbitrary categories and handles misses"
+  );
+
+  // 5e. Behavioral: resolveGalleryImages priority ordering
+  const galleryProduct = {
+    slug: "black-forest",
+    name: "Black Forest",
+    category: { slug: "cakes" },
+    product_images: [
+      {
+        id: "img-secondary",
+        product_id: "prod-1",
+        storage_path: "products/slice.webp",
+        alt_text: "Slice view",
+        sort_order: 1,
+        is_primary: false,
+      },
+      {
+        id: "img-primary",
+        product_id: "prod-1",
+        storage_path: "products/whole.webp",
+        alt_text: "Whole cake",
+        sort_order: 0,
+        is_primary: true,
+      },
+    ],
+  };
+  const resolvedGallery = resolveGalleryImages(galleryProduct);
+  assert(
+    resolvedGallery.length >= 2 &&
+      resolvedGallery[0].id === "img-primary" &&
+      resolvedGallery[0].url.includes("products/whole.webp") &&
+      resolvedGallery[1].id === "img-secondary",
+    "Media #90: resolveGalleryImages sorts primary uploaded image first followed by gallery items"
+  );
+
+  // 5f. Behavioral & Security: Magic bytes validation
+  const validJpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+  const validPngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+  const validWebpBuffer = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+  const fakeImageBuffer = Buffer.from("<html><script>alert('pwned')</script></html>");
+  assert(
+    validateImageMagicBytes(validJpegBuffer) === true &&
+      validateImageMagicBytes(validPngBuffer) === true &&
+      validateImageMagicBytes(validWebpBuffer) === true &&
+      validateImageMagicBytes(fakeImageBuffer) === false,
+    "Media #90: validateImageMagicBytes strictly validates true binary headers (JPEG, PNG, WebP) and rejects fake payloads"
+  );
+
+  // 5g. Storage Isolation & Query Integrity
+  const adminQueriesSrc = fs.readFileSync(path.join(process.cwd(), "lib/admin/queries.ts"), "utf8");
+  assert(
+    adminQueriesSrc.includes("product_images(*)"),
+    "Media #90: getAdminProducts query fetches product_images(*) relations for admin portal view"
+  );
+  assert(
+    adminActionsSrc.includes("uploadProductImageAction") &&
+      adminActionsSrc.includes("deleteProductImageAction") &&
+      adminActionsSrc.includes('.from("product-images")') &&
+      !adminActionsSrc.includes("cake-references"),
+    "Media #90: uploadProductImageAction strictly isolates catalog images to public 'product-images' bucket, never touching private 'cake-references'"
+  );
+  assert(
+    adminActionsSrc.includes('await supabase.storage.from("product-images").remove([storagePath])'),
+    "Media #90: uploadProductImageAction rolls back orphaned storage object if database insert fails"
+  );
+  assert(
+    adminActionsSrc.includes("is_primary && remainingImages && remainingImages.length > 0") &&
+      adminActionsSrc.includes("update({ is_primary: true })"),
+    "Media #90: deleteProductImageAction promotes next remaining image to primary when deleting active primary"
+  );
+
+  // 6. Targeted Fixes (#H-1, #M-1, #M-2, #L-1, #L-2, #L-3)
+  // 6a. L-1: UUID validation for image actions
+  const uuidSchema = z.string().uuid();
+  assert(
+    !uuidSchema.safeParse("not-a-uuid").success &&
+      !uuidSchema.safeParse("../../path/traversal").success &&
+      !uuidSchema.safeParse("").success &&
+      uuidSchema.safeParse("b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11").success,
+    "Targeted #L-1: Zod UUID validator strictly accepts valid UUIDs and rejects malformed/injected IDs"
+  );
+  assert(
+    adminActionsSrc.includes('z.string().uuid("Invalid product ID.").safeParse(productId)') &&
+      adminActionsSrc.includes('z.string().uuid("Invalid image ID.").safeParse(imageId)'),
+    "Targeted #L-1: uploadProductImageAction and deleteProductImageAction strictly validate UUIDs before querying database"
+  );
+
+  // 6b. L-2: Alt-text validation and clamping
+  const longAltText = "A".repeat(350);
+  const clampedAltText = typeof longAltText === "string" ? longAltText.trim().slice(0, 200) : "";
+  assert(
+    clampedAltText.length === 200 &&
+      adminActionsSrc.includes("rawAltText.trim().slice(0, 200)"),
+    "Targeted #L-2: uploadProductImageAction trims and clamps alt text to a safe maximum of 200 characters"
+  );
+
+  // 6c. M-2: Primary image upload ordering and consistency
+  const storageUploadIndex = adminActionsSrc.indexOf('supabase.storage\n      .from("product-images")\n      .upload');
+  const demoteDbIndex = adminActionsSrc.indexOf('update({ is_primary: false })');
+  assert(
+    storageUploadIndex !== -1 && demoteDbIndex !== -1 && storageUploadIndex < demoteDbIndex,
+    "Targeted #M-2: uploadProductImageAction uploads file to storage BEFORE modifying database primary state"
+  );
+  assert(
+    adminActionsSrc.includes("Failed to clean up storage object on insert error") &&
+      adminActionsSrc.includes("Failed to restore previous primary image"),
+    "Targeted #M-2: uploadProductImageAction safely rolls back storage and restores previous primary on insert error"
+  );
+
+  // 6d. H-1: Product image modal preview synchronization
+  const initialModalProduct = {
+    id: "prod-modal-1",
+    slug: "chocolate-truffle",
+    name: "Chocolate Truffle",
+    category: { slug: "cakes", name: "Cakes" },
+    product_images: [
+      {
+        id: "img-old-primary",
+        product_id: "prod-modal-1",
+        storage_path: "products/old-primary.webp",
+        alt_text: "Old photo",
+        sort_order: 0,
+        is_primary: true,
+      },
+    ],
+  };
+  const resolvedBeforeUpload = resolvePrimaryProductImage(initialModalProduct);
+  assert(
+    Boolean(resolvedBeforeUpload.url?.includes("products/old-primary.webp")),
+    "Targeted #H-1: Initial product state resolves existing primary image"
+  );
+
+  // Simulate optimistic upload in modal
+  const newlyUploadedImg = {
+    id: "img-new-primary",
+    product_id: "prod-modal-1",
+    storage_path: "products/new-primary.webp",
+    alt_text: "New custom photo",
+    sort_order: 0,
+    is_primary: true,
+  };
+  const updatedModalProduct = {
+    ...initialModalProduct,
+    product_images: [
+      newlyUploadedImg,
+      ...initialModalProduct.product_images.map((img) => ({ ...img, is_primary: false })),
+    ],
+  };
+  const resolvedAfterUpload = resolvePrimaryProductImage(updatedModalProduct);
+  assert(
+    Boolean(resolvedAfterUpload.url?.includes("products/new-primary.webp")) &&
+      updatedModalProduct.product_images.length === 2 &&
+      updatedModalProduct.product_images[1].is_primary === false,
+    "Targeted #H-1: Product image preview updates immediately to newly uploaded primary image"
+  );
+
+  // Simulate optimistic deletion in modal
+  const remainingImagesAfterDelete = updatedModalProduct.product_images.filter((img) => img.id !== "img-new-primary");
+  if (remainingImagesAfterDelete.length > 0) {
+    remainingImagesAfterDelete[0] = { ...remainingImagesAfterDelete[0], is_primary: true };
+  }
+  const modalProductAfterDelete = {
+    ...updatedModalProduct,
+    product_images: remainingImagesAfterDelete,
+  };
+  const resolvedAfterDelete = resolvePrimaryProductImage(modalProductAfterDelete);
+  assert(
+    Boolean(resolvedAfterDelete.url?.includes("products/old-primary.webp")) &&
+      modalProductAfterDelete.product_images.length === 1 &&
+      modalProductAfterDelete.product_images[0].is_primary === true,
+    "Targeted #H-1: Deleting primary photo promotes next remaining photo and synchronizes preview immediately"
+  );
+
+  assert(
+    catalogViewSrc.includes("const activeEditingProduct = React.useMemo(") &&
+      catalogViewSrc.includes("products.find((p) => p.id === editingProduct.id) ?? editingProduct"),
+    "Targeted #H-1: Admin catalog view derives activeEditingProduct from fresh products prop while modal is open"
+  );
+
+  // 6e. M-1: Category visibility error feedback
+  assert(
+    catalogViewSrc.includes("handleToggleCategoryVisibility") &&
+      catalogViewSrc.includes('setErrorMessage(res.error || `Failed to update visibility for category "${cat.name}".`)'),
+    "Targeted #M-1: handleToggleCategoryVisibility surfaces errors via setErrorMessage on toggle failure"
+  );
+
+  // 6f. L-3: Precise special-closure error mapping
+  assert(
+    adminActionsSrc.includes("special_closures_location_id_closure_date_key") &&
+      adminActionsSrc.includes('[updateSpecialClosureAction] Error:'),
+    "Targeted #L-3: Special closure actions map exact 23505 duplicate date constraint and sanitize error logging"
   );
 
   console.log("\n========================================================");

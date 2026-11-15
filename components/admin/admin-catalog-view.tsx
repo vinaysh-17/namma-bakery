@@ -14,12 +14,16 @@ import {
   X,
   Trash2,
   MoreVertical,
+  Upload,
+  Image as ImageIcon,
+  Check,
 } from "lucide-react";
 import type {
   AdminProduct,
   AdminCategory,
   AdminPriceTierWithRules,
 } from "@/lib/admin/types";
+import type { ProductImage } from "@/lib/menu/types";
 import {
   upsertProductAction,
   toggleProductAvailabilityAction,
@@ -29,7 +33,10 @@ import {
   toggleCategoryVisibilityAction,
   archiveCategoryAction,
   deleteCategoryAction,
+  uploadProductImageAction,
+  deleteProductImageAction,
 } from "@/lib/admin/actions";
+import { resolvePrimaryProductImage } from "@/lib/menu/product-images";
 import { AdminVariantsModal } from "./admin-variants-modal";
 import { AdminProductPricingView } from "./admin-product-pricing-view";
 import {
@@ -176,6 +183,24 @@ export function AdminCatalogView({
   // Shared form submission state
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+
+  // Form custom state (#85, #90)
+  const [isSlugManuallyEdited, setIsSlugManuallyEdited] = React.useState(false);
+  const [imageFile, setImageFile] = React.useState<File | null>(null);
+  const [imageAltText, setImageAltText] = React.useState("");
+  const [isUploadingImage, setIsUploadingImage] = React.useState(false);
+  const [isDeletingImage, setIsDeletingImage] = React.useState(false);
+  const [imageError, setImageError] = React.useState<string | null>(null);
+  const [imageSuccess, setImageSuccess] = React.useState<string | null>(null);
+
+  // Active product synchronization (#H-1):
+  // Derives the latest product entity from updated products prop when modal is open,
+  // ensuring image upload / deletion updates thumbnail, status badge, and resolved URL
+  // immediately without resetting productFormData.
+  const activeEditingProduct = React.useMemo(() => {
+    if (!editingProduct) return null;
+    return products.find((p) => p.id === editingProduct.id) ?? editingProduct;
+  }, [editingProduct, products]);
 
   // Active Category resolution
   const activeCategoryId = selectedCategoryId || localCategories[0]?.id || "";
@@ -330,6 +355,8 @@ export function AdminCatalogView({
         prev.map((c) => (c.id === cat.id ? { ...c, is_visible: !cat.is_visible } : c))
       );
       onActionSuccess();
+    } else {
+      setErrorMessage(res.error || `Failed to update visibility for category "${cat.name}".`);
     }
   };
 
@@ -381,24 +408,30 @@ export function AdminCatalogView({
 
   // ---------------------------------------------------------------- PRODUCT HANDLERS
   const handleOpenCreateProduct = () => {
+    const isCake = isCakeCategory;
     setProductFormData({
       category_id: currentCategory?.id || categories[0]?.id || "",
       name: "",
       name_kn: "",
       slug: "",
       description: "",
-      kind: isCakeCategory ? "TIERED_CAKE" : "SIMPLE",
-      price_tier_id: isCakeCategory ? priceTiers[0]?.id || null : null,
+      kind: isCake ? "TIERED_CAKE" : "SIMPLE",
+      price_tier_id: isCake ? priceTiers[0]?.id || null : null,
       is_available: true,
       orderable_online: true,
-      requires_confirmation: true,
+      requires_confirmation: isCake ? true : false,
       is_featured: false,
       is_best_seller: false,
       is_new_arrival: false,
       is_seasonal: false,
-      lead_time_minutes: 240,
+      lead_time_minutes: isCake ? 240 : 60,
       sort_order: categoryProducts.length * 10,
     });
+    setIsSlugManuallyEdited(false);
+    setImageFile(null);
+    setImageAltText("");
+    setImageError(null);
+    setImageSuccess(null);
     setErrorMessage(null);
     setIsCreatingProduct(true);
     setEditingProduct(null);
@@ -424,6 +457,11 @@ export function AdminCatalogView({
       lead_time_minutes: prod.lead_time_minutes,
       sort_order: prod.sort_order,
     });
+    setIsSlugManuallyEdited(true);
+    setImageFile(null);
+    setImageAltText("");
+    setImageError(null);
+    setImageSuccess(null);
     setErrorMessage(null);
     setEditingProduct(prod);
     setIsCreatingProduct(false);
@@ -432,7 +470,95 @@ export function AdminCatalogView({
   const handleCloseProductModal = () => {
     setIsCreatingProduct(false);
     setEditingProduct(null);
+    setIsSlugManuallyEdited(false);
+    setImageFile(null);
+    setImageAltText("");
+    setImageError(null);
+    setImageSuccess(null);
     setErrorMessage(null);
+  };
+
+  const handleUploadProductImage = async (productId: string) => {
+    if (!imageFile) return;
+    setIsUploadingImage(true);
+    setImageError(null);
+    setImageSuccess(null);
+
+    const fd = new FormData();
+    fd.append("productId", productId);
+    fd.append("file", imageFile);
+    fd.append("altText", imageAltText.trim() || productFormData.name || "Product photo");
+    fd.append("isPrimary", "true");
+
+    const res = await uploadProductImageAction(fd);
+    setIsUploadingImage(false);
+
+    if (res.success && res.data) {
+      setImageFile(null);
+      setImageAltText("");
+      setImageSuccess("Product photo uploaded successfully!");
+      setTimeout(() => setImageSuccess(null), 3000);
+
+      // Optimistically update editingProduct state with new primary image
+      // while keeping productFormData completely intact (#H-1)
+      const uploadedImg: ProductImage = {
+        id: res.data.id,
+        product_id: productId,
+        storage_path: res.data.storage_path,
+        alt_text: imageAltText.trim() || productFormData.name || "Product photo",
+        is_primary: true,
+        sort_order: 0,
+      };
+      setEditingProduct((prev) => {
+        if (!prev) return null;
+        const remaining = (prev.product_images || []).map((img) => ({
+          ...img,
+          is_primary: false,
+        }));
+        return {
+          ...prev,
+          product_images: [uploadedImg, ...remaining],
+        };
+      });
+
+      onActionSuccess();
+    } else {
+      setImageError(res.error || "Failed to upload image.");
+    }
+  };
+
+  const handleDeleteProductImage = async (imageId: string) => {
+    if (!window.confirm("Are you sure you want to remove this custom photo?")) return;
+    setIsDeletingImage(true);
+    setImageError(null);
+    setImageSuccess(null);
+
+    const res = await deleteProductImageAction(imageId);
+    setIsDeletingImage(false);
+
+    if (res.success) {
+      setImageSuccess("Custom photo removed.");
+      setTimeout(() => setImageSuccess(null), 3000);
+
+      // Optimistically update editingProduct state by filtering out deleted image
+      // and promoting the next remaining image to primary if deleted image was primary (#H-1)
+      setEditingProduct((prev) => {
+        if (!prev || !prev.product_images) return prev;
+        const wasPrimary = prev.product_images.find((img) => img.id === imageId)?.is_primary;
+        const filtered = prev.product_images.filter((img) => img.id !== imageId);
+        if (wasPrimary && filtered.length > 0) {
+          filtered[0] = { ...filtered[0], is_primary: true };
+        }
+        return {
+          ...prev,
+          product_images: filtered,
+        };
+      });
+
+      onActionSuccess();
+    } else {
+      setImageError(res.error || "Failed to delete photo.");
+    }
   };
 
   const handleSubmitProduct = async (e: React.FormEvent) => {
@@ -444,6 +570,12 @@ export function AdminCatalogView({
       productFormData.slug && productFormData.slug.trim()
         ? productFormData.slug.trim()
         : generateSlug(productFormData.name);
+
+    if (productFormData.kind === "TIERED_CAKE" && !productFormData.price_tier_id) {
+      setIsSubmitting(false);
+      setErrorMessage("Please select a price tier for this tiered cake.");
+      return;
+    }
 
     const submissionData = {
       ...productFormData,
@@ -566,6 +698,27 @@ export function AdminCatalogView({
 
   return (
     <div className="space-y-5">
+      {/* Top-Level Quick-Action Error Banner (#86) */}
+      {errorMessage && !isCreatingCategory && !editingCategory && !isCreatingProduct && !editingProduct && (
+        <div
+          role="alert"
+          className="flex items-center justify-between p-3 rounded-sm text-xs bg-destructive/10 text-destructive border border-destructive/20 animate-in fade-in duration-150"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="size-4 shrink-0" />
+            <span className="font-semibold">{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="p-1 rounded hover:bg-destructive/10 text-destructive cursor-pointer"
+            aria-label="Dismiss error"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Primary Category Selector & Action Toolbar (Sticky while scrolling through catalog) */}
       <div className="sticky top-[117px] z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2.5 bg-background/95 backdrop-blur-md border-b border-border/80 shadow-2xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
@@ -864,13 +1017,38 @@ export function AdminCatalogView({
                         >
                           {/* Product Column */}
                           <td className="py-2.5 px-3">
-                            <div className="font-semibold text-foreground">
-                              {prod.name}
-                              {isArchived && (
-                                <span className="ml-1.5 inline-block px-1.5 py-0.2 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                  Archived
-                                </span>
-                              )}
+                            <div className="flex items-center gap-2.5">
+                              {(() => {
+                                const resolved = resolvePrimaryProductImage(prod);
+                                return resolved.url ? (
+                                  /* eslint-disable-next-line @next/next/no-img-element */
+                                  <img
+                                    src={resolved.url}
+                                    alt={resolved.alt}
+                                    className="size-9 rounded-sm object-cover border border-border shrink-0 bg-muted/20"
+                                  />
+                                ) : (
+                                  <div
+                                    className="size-9 rounded-sm border border-dashed border-border bg-muted/30 flex items-center justify-center shrink-0 text-muted-foreground"
+                                    title="No photo"
+                                  >
+                                    <ImageIcon className="size-4 text-muted-foreground/60" />
+                                  </div>
+                                );
+                              })()}
+                              <div className="min-w-0">
+                                <div className="font-semibold text-foreground truncate">
+                                  {prod.name}
+                                  {isArchived && (
+                                    <span className="ml-1.5 inline-block px-1.5 py-0.2 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                      Archived
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground font-mono">
+                                  /{prod.slug}
+                                </div>
+                              </div>
                             </div>
                           </td>
 
@@ -1191,8 +1369,14 @@ export function AdminCatalogView({
             )}
 
             <form onSubmit={handleSubmitProduct} className="space-y-4 text-xs">
-              {/* Category & Product Kind */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Category, Product Kind & Price Tier (#66) */}
+              <div
+                className={
+                  productFormData.kind === "TIERED_CAKE"
+                    ? "grid grid-cols-1 sm:grid-cols-3 gap-3"
+                    : "grid grid-cols-1 sm:grid-cols-2 gap-3"
+                }
+              >
                 <div>
                   <label className="block font-semibold text-foreground mb-1">
                     Category *
@@ -1230,6 +1414,15 @@ export function AdminCatalogView({
                           kind === "TIERED_CAKE"
                             ? prev.price_tier_id || priceTiers[0]?.id || null
                             : null,
+                        lead_time_minutes:
+                          kind === "TIERED_CAKE"
+                            ? prev.lead_time_minutes === 60
+                              ? 240
+                              : prev.lead_time_minutes
+                            : prev.lead_time_minutes === 240
+                              ? 60
+                              : prev.lead_time_minutes,
+                        requires_confirmation: kind === "TIERED_CAKE" ? true : false,
                       }));
                     }}
                     className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
@@ -1238,10 +1431,36 @@ export function AdminCatalogView({
                     <option value="TIERED_CAKE">Tiered Cake (Multi-weight pricing)</option>
                   </select>
                 </div>
+
+                {productFormData.kind === "TIERED_CAKE" && (
+                  <div>
+                    <label className="block font-semibold text-foreground mb-1">
+                      Price Tier *
+                    </label>
+                    <select
+                      required
+                      value={productFormData.price_tier_id || ""}
+                      onChange={(e) =>
+                        setProductFormData((prev) => ({
+                          ...prev,
+                          price_tier_id: e.target.value || null,
+                        }))
+                      }
+                      className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
+                    >
+                      <option value="">Select a price tier...</option>
+                      {priceTiers.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.price_tier_rules?.length ?? 0} rules)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
-              {/* Names */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Names & Slug (#85) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold text-foreground mb-1">
                     Product Name (English) *
@@ -1255,7 +1474,7 @@ export function AdminCatalogView({
                       setProductFormData((prev) => ({
                         ...prev,
                         name,
-                        slug: isCreatingProduct ? generateSlug(name) : prev.slug,
+                        slug: isSlugManuallyEdited ? prev.slug : generateSlug(name),
                       }));
                     }}
                     placeholder="e.g. Vanilla Cake, Paneer Sandwich"
@@ -1278,6 +1497,26 @@ export function AdminCatalogView({
                     }
                     placeholder="e.g. ವೆನಿಲ್ಲಾ ಕೇಕ್"
                     className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel font-kannada"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-foreground mb-1">
+                    URL Slug *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={productFormData.slug}
+                    onChange={(e) => {
+                      setIsSlugManuallyEdited(true);
+                      setProductFormData((prev) => ({
+                        ...prev,
+                        slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+                      }));
+                    }}
+                    placeholder="e.g. vanilla-cake"
+                    className="w-full h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel font-mono text-xs"
                   />
                 </div>
               </div>
@@ -1366,37 +1605,227 @@ export function AdminCatalogView({
                 </div>
               </div>
 
-              {/* Operations & Ordering Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={productFormData.is_available}
-                    onChange={(e) =>
-                      setProductFormData((prev) => ({
-                        ...prev,
-                        is_available: e.target.checked,
-                      }))
-                    }
-                    className="size-4 rounded border-border text-caramel focus:ring-caramel accent-caramel"
-                  />
-                  <span>Available in Store Today</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={productFormData.orderable_online}
-                    onChange={(e) =>
-                      setProductFormData((prev) => ({
-                        ...prev,
-                        orderable_online: e.target.checked,
-                      }))
-                    }
-                    className="size-4 rounded border-border text-caramel focus:ring-caramel accent-caramel"
-                  />
-                  <span>Orderable Online</span>
-                </label>
+              {/* Operations, Ordering, Lead Time & Confirmation Controls (#71) */}
+              <div className="pt-2 border-t border-border space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={productFormData.is_available}
+                      onChange={(e) =>
+                        setProductFormData((prev) => ({
+                          ...prev,
+                          is_available: e.target.checked,
+                        }))
+                      }
+                      className="size-4 rounded border-border text-caramel focus:ring-caramel accent-caramel"
+                    />
+                    <span>Available in Store Today</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={productFormData.orderable_online}
+                      onChange={(e) =>
+                        setProductFormData((prev) => ({
+                          ...prev,
+                          orderable_online: e.target.checked,
+                        }))
+                      }
+                      className="size-4 rounded border-border text-caramel focus:ring-caramel accent-caramel"
+                    />
+                    <span>Orderable Online</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border/60">
+                  <div>
+                    <label className="block font-semibold text-foreground mb-1">
+                      Lead Time (Minutes) *
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        required
+                        value={productFormData.lead_time_minutes}
+                        onChange={(e) =>
+                          setProductFormData((prev) => ({
+                            ...prev,
+                            lead_time_minutes: Math.max(0, parseInt(e.target.value) || 0),
+                          }))
+                        }
+                        className="w-28 h-9 px-3 rounded-sm border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
+                      />
+                      <span className="text-muted-foreground text-xs">minutes</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {[
+                        { label: "30m", val: 30 },
+                        { label: "60m (1h)", val: 60 },
+                        { label: "120m (2h)", val: 120 },
+                        { label: "240m (4h)", val: 240 },
+                        { label: "480m (8h)", val: 480 },
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          onClick={() =>
+                            setProductFormData((prev) => ({
+                              ...prev,
+                              lead_time_minutes: preset.val,
+                            }))
+                          }
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium border cursor-pointer ${
+                            productFormData.lead_time_minutes === preset.val
+                              ? "bg-caramel text-white border-caramel"
+                              : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Earliest pickup notice required for cart items containing this product.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col justify-start">
+                    <label className="block font-semibold text-foreground mb-1">
+                      Confirmation Setting
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer mt-1">
+                      <input
+                        type="checkbox"
+                        checked={productFormData.requires_confirmation}
+                        onChange={(e) =>
+                          setProductFormData((prev) => ({
+                            ...prev,
+                            requires_confirmation: e.target.checked,
+                          }))
+                        }
+                        className="size-4 rounded border-border text-caramel focus:ring-caramel accent-caramel"
+                      />
+                      <span className="font-medium text-foreground">
+                        Requires Staff Review / Confirmation
+                      </span>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground ml-6 mt-1">
+                      If checked, orders containing this item require staff review before being confirmed.
+                    </p>
+                  </div>
+                </div>
               </div>
+
+              {/* Product Photo Management (#90, #H-1) */}
+              {activeEditingProduct && (
+                <div className="pt-3 border-t border-border space-y-2.5">
+                  <label className="block font-semibold text-foreground">
+                    Product Photo
+                  </label>
+                  {imageError && (
+                    <div className="flex items-center gap-2 p-2 rounded text-xs bg-destructive/10 text-destructive border border-destructive/20">
+                      <AlertCircle className="size-3.5 shrink-0" />
+                      <span>{imageError}</span>
+                    </div>
+                  )}
+                  {imageSuccess && (
+                    <div className="flex items-center gap-2 p-2 rounded text-xs bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
+                      <Check className="size-3.5 shrink-0" />
+                      <span>{imageSuccess}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-3 p-3 rounded-sm border border-border bg-muted/20">
+                    {(() => {
+                      const resolved = resolvePrimaryProductImage(activeEditingProduct);
+                      const customImage =
+                        activeEditingProduct.product_images?.find((img) => img.is_primary) ??
+                        activeEditingProduct.product_images?.[0];
+                      return (
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          {resolved.url ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={resolved.url}
+                              alt={resolved.alt}
+                              className="size-16 rounded-sm object-cover border border-border shrink-0 bg-background"
+                            />
+                          ) : (
+                            <div className="size-16 rounded-sm border border-dashed border-border bg-muted/50 flex flex-col items-center justify-center shrink-0 text-muted-foreground">
+                              <ImageIcon className="size-6 text-muted-foreground/60" />
+                              <span className="text-[9px] mt-0.5">No Photo</span>
+                            </div>
+                          )}
+
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-2">
+                              {customImage ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                  Custom Photo (Uploaded)
+                                </span>
+                              ) : resolved.isLocal ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                                  Stock Catalog Photo
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground">
+                                  No Photo
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {customImage
+                                ? "Custom photo in Supabase Storage. Upload a new photo to replace."
+                                : "Upload a photo (PNG, JPEG, WebP up to 5MB) to customize this product's image."}
+                            </p>
+                            {customImage && (
+                              <button
+                                type="button"
+                                disabled={isDeletingImage}
+                                onClick={() => handleDeleteProductImage(customImage.id)}
+                                className="text-[11px] text-destructive hover:underline font-semibold cursor-pointer disabled:opacity-50"
+                              >
+                                {isDeletingImage ? "Removing photo..." : "Remove Custom Photo"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* File upload input */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setImageFile(f);
+                        setImageError(null);
+                      }}
+                      className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-xs file:border-0 file:text-xs file:font-semibold file:bg-muted file:text-foreground hover:file:bg-muted/80 cursor-pointer"
+                    />
+                    {imageFile && (
+                      <button
+                        type="button"
+                        disabled={isUploadingImage}
+                        onClick={() => handleUploadProductImage(activeEditingProduct.id)}
+                        className="h-8 px-3 rounded-sm bg-caramel text-white text-xs font-semibold hover:bg-caramel/90 transition-colors flex items-center justify-center gap-1.5 shrink-0 disabled:opacity-50"
+                      >
+                        {isUploadingImage ? (
+                          <RotateCcw className="size-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="size-3.5" />
+                        )}
+                        <span>Upload Photo</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
                 <button

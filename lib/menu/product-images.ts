@@ -16,30 +16,55 @@ export function normalizeImageSlug(value: string): string {
 }
 
 /**
+ * Searches the static manifest across all categories for a product slug or name.
+ * Provides category-resilience: if a product moves to another category, its image
+ * does not disappear.
+ */
+export function findManifestImageBySlug(productSlugOrName?: string | null): string | null {
+  if (!productSlugOrName) return null;
+  const target = normalizeImageSlug(productSlugOrName);
+  if (!target) return null;
+
+  for (const [key, url] of Object.entries(PRODUCT_IMAGE_MANIFEST)) {
+    const parts = key.split("/");
+    const lastPart = parts[parts.length - 1];
+    if (lastPart && normalizeImageSlug(lastPart) === target) {
+      return url;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Resolves a local optimized WebP image URL for a given category and product slug or name.
+ * Falls back to cross-category slug search if not found in the specified category.
  * Returns null if no local asset is found in the manifest.
  */
 export function getLocalProductImageUrl(
   categorySlug?: string | null,
   productSlugOrName?: string | null
 ): string | null {
-  if (!categorySlug || !productSlugOrName) return null;
+  if (!productSlugOrName) return null;
 
-  // Direct lookup first
-  const directKey = `${categorySlug}/${productSlugOrName}`;
-  if (PRODUCT_IMAGE_MANIFEST[directKey]) {
-    return PRODUCT_IMAGE_MANIFEST[directKey];
+  if (categorySlug) {
+    // Direct lookup first
+    const directKey = `${categorySlug}/${productSlugOrName}`;
+    if (PRODUCT_IMAGE_MANIFEST[directKey]) {
+      return PRODUCT_IMAGE_MANIFEST[directKey];
+    }
+
+    // Normalized lookup
+    const normCat = normalizeImageSlug(categorySlug);
+    const normProd = normalizeImageSlug(productSlugOrName);
+    const normKey = `${normCat}/${normProd}`;
+    if (PRODUCT_IMAGE_MANIFEST[normKey]) {
+      return PRODUCT_IMAGE_MANIFEST[normKey];
+    }
   }
 
-  // Normalized lookup
-  const normCat = normalizeImageSlug(categorySlug);
-  const normProd = normalizeImageSlug(productSlugOrName);
-  const normKey = `${normCat}/${normProd}`;
-  if (PRODUCT_IMAGE_MANIFEST[normKey]) {
-    return PRODUCT_IMAGE_MANIFEST[normKey];
-  }
-
-  return null;
+  // Cross-category fallback: product might have moved between categories (#90)
+  return findManifestImageBySlug(productSlugOrName);
 }
 
 export interface ResolvedProductImage {
@@ -50,9 +75,9 @@ export interface ResolvedProductImage {
 
 /**
  * Resolves the primary image for a product.
- * Resolution hierarchy:
- * 1. Matching local optimized image (preferred)
- * 2. Supabase storage image from product_images table (fallback)
+ * Resolution hierarchy (#90):
+ * 1. Admin-uploaded primary image from product_images table in Supabase Storage (preferred)
+ * 2. Matching local optimized image from static manifest (direct or cross-category fallback)
  * 3. Null (triggers UI icon placeholder)
  */
 export function resolvePrimaryProductImage(product: {
@@ -61,19 +86,7 @@ export function resolvePrimaryProductImage(product: {
   category?: { slug?: string; name?: string } | null;
   product_images?: ProductImage[] | null;
 }): ResolvedProductImage {
-  const categorySlug = product.category?.slug;
-  const localUrl =
-    getLocalProductImageUrl(categorySlug, product.slug) ||
-    getLocalProductImageUrl(categorySlug, product.name);
-
-  if (localUrl) {
-    return {
-      url: localUrl,
-      alt: `${product.name ?? "Bakery item"} — Handcrafted at Namma Bakery`,
-      isLocal: true,
-    };
-  }
-
+  // 1. Admin-uploaded image from database (takes top priority over static assets)
   const primarySupabaseImage =
     product.product_images?.find((img) => img.is_primary) ??
     product.product_images?.[0];
@@ -90,6 +103,21 @@ export function resolvePrimaryProductImage(product: {
     };
   }
 
+  // 2. Local optimized image (with category-resilient fallback)
+  const categorySlug = product.category?.slug;
+  const localUrl =
+    getLocalProductImageUrl(categorySlug, product.slug) ||
+    getLocalProductImageUrl(categorySlug, product.name);
+
+  if (localUrl) {
+    return {
+      url: localUrl,
+      alt: `${product.name ?? "Bakery item"} — Handcrafted at Namma Bakery`,
+      isLocal: true,
+    };
+  }
+
+  // 3. Fallback: null triggers UI placeholder
   return {
     url: null,
     alt: product.name || "Bakery item",
@@ -106,9 +134,9 @@ export interface GalleryDisplayImage {
 
 /**
  * Resolves the gallery display images for the product detail page.
- * Returns an ordered list:
- * - Local optimized image (if present) as the primary image
- * - Any additional Supabase storage images
+ * Returns an ordered list (#90):
+ * - Uploaded Supabase storage images (with primary image first)
+ * - Local optimized image from manifest (if not duplicated)
  * Returns an empty array if no images exist, prompting the fallback placeholder.
  */
 export function resolveGalleryImages(product: {
@@ -118,29 +146,21 @@ export function resolveGalleryImages(product: {
   product_images?: ProductImage[] | null;
 }): GalleryDisplayImage[] {
   const result: GalleryDisplayImage[] = [];
-  const categorySlug = product.category?.slug;
-
-  const localUrl =
-    getLocalProductImageUrl(categorySlug, product.slug) ||
-    getLocalProductImageUrl(categorySlug, product.name);
-
-  if (localUrl) {
-    result.push({
-      id: "local-primary",
-      url: localUrl,
-      alt: `${product.name ?? "Bakery item"} — Handcrafted at Namma Bakery`,
-      isLocal: true,
-    });
-  }
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  // 1. Uploaded Supabase images (primary first, then by sort_order)
   if (product.product_images && product.product_images.length > 0) {
-    for (const img of product.product_images) {
+    const sortedImages = [...product.product_images].sort((a, b) => {
+      if (a.is_primary && !b.is_primary) return -1;
+      if (!a.is_primary && b.is_primary) return 1;
+      return a.sort_order - b.sort_order;
+    });
+
+    for (const img of sortedImages) {
       const url = img.storage_path.startsWith("http")
         ? img.storage_path
         : `${supabaseUrl}/storage/v1/object/public/product-images/${img.storage_path}`;
 
-      // Avoid duplicate URL if storage_path happens to match localUrl
       if (!result.some((r) => r.url === url)) {
         result.push({
           id: img.id,
@@ -150,6 +170,21 @@ export function resolveGalleryImages(product: {
         });
       }
     }
+  }
+
+  // 2. Local manifest image as fallback (or secondary if gallery is empty)
+  const categorySlug = product.category?.slug;
+  const localUrl =
+    getLocalProductImageUrl(categorySlug, product.slug) ||
+    getLocalProductImageUrl(categorySlug, product.name);
+
+  if (localUrl && !result.some((r) => r.url === localUrl)) {
+    result.push({
+      id: "local-primary",
+      url: localUrl,
+      alt: `${product.name ?? "Bakery item"} — Handcrafted at Namma Bakery`,
+      isLocal: true,
+    });
   }
 
   return result;

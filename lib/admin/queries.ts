@@ -182,7 +182,8 @@ export async function getAdminProducts(): Promise<{
         *,
         category:categories(id, name, slug),
         product_variants(*),
-        price_tiers(id, name)
+        price_tiers(id, name),
+        product_images(*)
       `
       )
       .order("sort_order", { ascending: true });
