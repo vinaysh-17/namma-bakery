@@ -47,7 +47,12 @@ import {
 import { publicStoreStatusSchema } from "../lib/pickup/validation";
 import { createIdempotencyKey, IDEMPOTENCY_KEY_PATTERN } from "../lib/orders/idempotency";
 import { dayRange, weekRange, monthRange, customRange } from "../lib/admin/order-history-types";
-import { calculateOperationalSummary, getOrderPickupDateIst } from "../lib/staff/summary";
+import {
+  calculateOperationalSummary,
+  getOrderPickupDateIst,
+  isPendingOrderOverdue,
+} from "../lib/staff/summary";
+import { parseSettingsInt } from "../lib/admin/form-utils";
 import type { StaffOrder } from "../lib/staff/types";
 import {
   getCustomCakeCustomerStage,
@@ -3199,6 +3204,171 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
   assert(
     cartViewSrc96.includes("disabled={item.quantity >= MAX_QUANTITY_PER_ITEM}"),
     "Cart #96: the cart page's '+' button is disabled once a line reaches the cap"
+  );
+
+  // --- 22. Batch 2: Store Settings Accept A Deliberate Zero (#67) ---
+  console.log("\n--- 22. Batch 2: Store Settings Accept A Deliberate Zero (#67) ---");
+
+  assert(
+    parseSettingsInt("0", 6) === 0,
+    "Settings #67: entering 0 is sent as 0, not silently replaced by the fallback"
+  );
+  assert(
+    parseSettingsInt("", 6) === 6,
+    "Settings #67: a blank field still falls back to the default"
+  );
+  assert(
+    parseSettingsInt("   ", 4) === 4,
+    "Settings #67: a whitespace-only field falls back to the default"
+  );
+  assert(
+    parseSettingsInt("abc", 4) === 4,
+    "Settings #67: a non-numeric field falls back to the default rather than NaN"
+  );
+  assert(
+    parseSettingsInt("12", 4) === 12,
+    "Settings #67: a normal positive value passes through unchanged"
+  );
+  assert(
+    parseSettingsInt("-1", 4) === -1,
+    "Settings #67: parseSettingsInt itself does not clamp negatives -- that is the server Zod schema's job (min(0)), confirmed below"
+  );
+
+  const adminStoreOpsSrc67 = fs.readFileSync(
+    path.join(process.cwd(), "components/admin/admin-store-operations-view.tsx"),
+    "utf8"
+  );
+  assert(
+    !adminStoreOpsSrc67.includes("parseInt(maxOrdersPerSlot, 10) || 6") &&
+      !adminStoreOpsSrc67.includes("parseInt(maxCustomPerDay, 10) || 4") &&
+      !adminStoreOpsSrc67.includes("parseInt(cancelCutoffHours, 10) || 4") &&
+      !adminStoreOpsSrc67.includes("parseInt(pendingAlertMinutes, 10) || 15"),
+    "Settings #67: the old `parseInt(x, 10) || default` pattern that treated 0 as falsy is gone"
+  );
+  assert(
+    adminStoreOpsSrc67.includes("parseSettingsInt(maxOrdersPerSlot, 6)") &&
+      adminStoreOpsSrc67.includes("parseSettingsInt(maxCustomPerDay, 4)") &&
+      adminStoreOpsSrc67.includes("parseSettingsInt(cancelCutoffHours, 4)") &&
+      adminStoreOpsSrc67.includes("parseSettingsInt(pendingAlertMinutes, 15)"),
+    "Settings #67: all four numeric fields now use the zero-safe parser"
+  );
+  assert(
+    adminStoreOpsSrc67.includes('settingsFeedback.type === "error"') &&
+      adminStoreOpsSrc67.includes("bg-destructive/10 text-destructive"),
+    "Settings #67: a failed save is shown with the destructive style, not the green success style"
+  );
+  assert(
+    adminStoreOpsSrc67.includes("setMaxOrdersPerSlot(String(nextMaxOrdersPerSlot))") &&
+      adminStoreOpsSrc67.includes("setPendingAlertMinutes(String(nextPendingAlertMinutes))"),
+    "Settings #67: after a successful save, the form is updated to reflect exactly what was persisted"
+  );
+
+  // The server's own Zod validation remains the authority on what is actually acceptable
+  // (e.g. a literal 0 passed through by the client-side fix above must still be rejected
+  // for pending_alert_minutes, and accepted for the other three fields).
+  const validSettingsUuid = "a1b2c3d4-e5f6-4789-9abc-def012345678";
+  assert(
+    !adminStoreSettingsSchema.safeParse({
+      location_id: validSettingsUuid,
+      slot_minutes: 30,
+      max_orders_per_slot: 0,
+      max_custom_per_day: 0,
+      cancel_cutoff_hours: 0,
+      pending_alert_minutes: 0,
+    }).success,
+    "Settings #67: the server still rejects pending_alert_minutes = 0 (must stay positive)"
+  );
+  assert(
+    adminStoreSettingsSchema.safeParse({
+      location_id: validSettingsUuid,
+      slot_minutes: 30,
+      max_orders_per_slot: 0,
+      max_custom_per_day: 0,
+      cancel_cutoff_hours: 0,
+      pending_alert_minutes: 15,
+    }).success,
+    "Settings #67: the server accepts a genuine 0 for max_orders_per_slot, max_custom_per_day and cancel_cutoff_hours"
+  );
+
+  // --- 23. Batch 2: Kitchen Alert Now Flags Overdue Pending Orders (#88) ---
+  console.log("\n--- 23. Batch 2: Kitchen Alert Now Flags Overdue Pending Orders (#88) ---");
+
+  function makeStaffOrderFixture(overrides: Partial<StaffOrder> = {}): StaffOrder {
+    return {
+      id: "order-1",
+      order_number: "NB1001",
+      customer_id: null,
+      customer_name: "Test Customer",
+      customer_phone: "9845200000",
+      customer_email: null,
+      status: "PENDING",
+      payment_status: "unpaid",
+      payment_method: "COUNTER",
+      requested_pickup_at: "2026-11-20T10:00:00+05:30",
+      confirmed_pickup_at: null,
+      estimated_ready_at: null,
+      total_paise: 50000,
+      customer_notes: null,
+      bakery_note: null,
+      rejection_reason: null,
+      cancellation_reason: null,
+      cancelled_by: null,
+      custom_request_id: null,
+      created_at: "2026-11-15T10:00:00.000Z",
+      updated_at: "2026-11-15T10:00:00.000Z",
+      completed_at: null,
+      order_items: [],
+      order_status_history: [],
+      order_internal_notes: [],
+      ...overrides,
+    } as unknown as StaffOrder;
+  }
+
+  const now = new Date("2026-11-15T10:20:00.000Z"); // 20 minutes after created_at above
+
+  assert(
+    isPendingOrderOverdue(makeStaffOrderFixture(), 15, now) === true,
+    "Kitchen Alert #88: a PENDING order older than the configured threshold (20min > 15min) is flagged overdue"
+  );
+  assert(
+    isPendingOrderOverdue(makeStaffOrderFixture(), 30, now) === false,
+    "Kitchen Alert #88: the same order is NOT overdue against a longer threshold (20min < 30min)"
+  );
+  assert(
+    isPendingOrderOverdue(makeStaffOrderFixture({ status: "ACCEPTED" }), 15, now) === false,
+    "Kitchen Alert #88: a non-PENDING order is never flagged, however old"
+  );
+  assert(
+    isPendingOrderOverdue(makeStaffOrderFixture(), 0, now) === false,
+    "Kitchen Alert #88: a non-positive threshold never fires (defensive; the database itself requires > 0)"
+  );
+  assert(
+    isPendingOrderOverdue(makeStaffOrderFixture({ created_at: "not-a-date" }), 15, now) === false,
+    "Kitchen Alert #88: an unparseable created_at is treated as not overdue rather than throwing"
+  );
+
+  const staffQueriesSrc88 = fs.readFileSync(path.join(process.cwd(), "lib/staff/queries.ts"), "utf8");
+  assert(
+    staffQueriesSrc88.includes("export async function getStorePendingAlertMinutes") &&
+      staffQueriesSrc88.includes('.select("pending_alert_minutes")'),
+    "Kitchen Alert #88: the staff portal now actually reads store_settings.pending_alert_minutes"
+  );
+
+  const staffOrderListSrc88 = fs.readFileSync(
+    path.join(process.cwd(), "components/staff/staff-order-list.tsx"),
+    "utf8"
+  );
+  assert(
+    staffOrderListSrc88.includes("isPendingOrderOverdue(order, pendingAlertMinutes)") &&
+      staffOrderListSrc88.includes("Needs Attention"),
+    "Kitchen Alert #88: the orders queue visibly flags overdue pending orders"
+  );
+
+  const staffPageSrc88 = fs.readFileSync(path.join(process.cwd(), "app/staff/page.tsx"), "utf8");
+  assert(
+    staffPageSrc88.includes("getStorePendingAlertMinutes()") &&
+      staffPageSrc88.includes("pendingAlertMinutes={pendingAlertMinutes}"),
+    "Kitchen Alert #88: the staff page fetches the threshold and passes it down to the dashboard"
   );
 
   console.log("\n========================================================");

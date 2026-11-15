@@ -8,6 +8,7 @@ import {
   calculateOperationalSummary,
   getStaffCustomCakeRequests,
   calculateCustomCakeSummary,
+  getStorePendingAlertMinutes,
 } from "@/lib/staff/queries";
 import { getPortalNotifications } from "@/lib/notifications/queries";
 import { StaffDashboard } from "@/components/staff/staff-dashboard";
@@ -68,10 +69,11 @@ export default async function StaffPage() {
   }
 
   // Fetch live orders & custom cake requests under staff RLS
-  const [ordersRes, customCakesRes, notificationsRes] = await Promise.all([
+  const [ordersRes, customCakesRes, notificationsRes, pendingAlertMinutes] = await Promise.all([
     getStaffOrders(),
     getStaffCustomCakeRequests(),
     getPortalNotifications(),
+    getStorePendingAlertMinutes(),
   ]);
 
   const orders = ordersRes.orders;
@@ -110,6 +112,7 @@ export default async function StaffPage() {
       initialNotifications={notificationsRes.notifications}
       initialUnreadCount={notificationsRes.unreadCount}
       liveTopic={staffTopic()}
+      pendingAlertMinutes={pendingAlertMinutes}
     />
   );
 }

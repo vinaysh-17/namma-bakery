@@ -50,6 +50,8 @@ interface StaffDashboardProps {
   initialUnreadCount?: number;
   /** Realtime ping topic: other staff / customer activity triggers a soft data refresh */
   liveTopic?: string;
+  /** Minutes a PENDING order may wait before the queue flags it (store_settings.pending_alert_minutes, #88) */
+  pendingAlertMinutes?: number;
 }
 
 export function StaffDashboard({
@@ -60,6 +62,7 @@ export function StaffDashboard({
   initialNotifications = [],
   initialUnreadCount = 0,
   liveTopic,
+  pendingAlertMinutes = 15,
 }: StaffDashboardProps) {
   const router = useRouter();
 
@@ -601,6 +604,7 @@ export function StaffDashboard({
                     activeFilter={activeOrderFilter}
                     onSelectOrder={handleSelectOrder}
                     onSelectFilter={setActiveOrderFilter}
+                    pendingAlertMinutes={pendingAlertMinutes}
                   />
                 </section>
 

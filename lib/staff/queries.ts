@@ -95,6 +95,33 @@ export async function getStaffOrders(options?: {
 export { calculateOperationalSummary } from "./summary";
 
 /**
+ * Fetches the configured "Kitchen Alert" threshold (store_settings.pending_alert_minutes):
+ * how long an order may sit in PENDING before the staff portal should flag it (GitHub
+ * issue #88). Readable by any authenticated staff member via RLS policy
+ * `settings_staff_read` (store_settings for select to authenticated using (is_staff())).
+ * Falls back to the column's own database default (15) if it cannot be read, rather than
+ * silently disabling the alert (0 would never fire).
+ */
+export async function getStorePendingAlertMinutes(): Promise<number> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("store_settings")
+      .select("pending_alert_minutes")
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data || typeof data.pending_alert_minutes !== "number") {
+      return 15;
+    }
+
+    return data.pending_alert_minutes;
+  } catch {
+    return 15;
+  }
+}
+
+/**
  * Fetches recent custom cake enquiries for the staff dashboard using the authenticated staff session.
  *
  * Constrained by RLS policy `requests_read` which verifies `is_staff()`.

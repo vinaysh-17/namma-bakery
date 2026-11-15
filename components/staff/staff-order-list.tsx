@@ -15,6 +15,7 @@ import type { StaffOrder, OrderFilter } from "@/lib/staff/types";
 import { formatPaise } from "@/lib/utils/money";
 import { formatIstDate, formatIstTime, getIstDateString } from "@/lib/utils/date";
 import { formatOrderItemVariant, formatOrderStatusLabel } from "@/lib/staff/formatters";
+import { isPendingOrderOverdue } from "@/lib/staff/summary";
 
 interface StaffOrderListProps {
   /** Orders due for pickup on the selected date. */
@@ -28,6 +29,8 @@ interface StaffOrderListProps {
   activeFilter: OrderFilter;
   onSelectOrder: (order: StaffOrder) => void;
   onSelectFilter: (filter: OrderFilter) => void;
+  /** Minutes a PENDING order may wait before being flagged "Needs Attention" (#88) */
+  pendingAlertMinutes?: number;
 }
 
 export function StaffOrderList({
@@ -37,6 +40,7 @@ export function StaffOrderList({
   activeFilter,
   onSelectOrder,
   onSelectFilter,
+  pendingAlertMinutes = 15,
 }: StaffOrderListProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -223,6 +227,7 @@ export function StaffOrderList({
               (item) => Boolean(item.cake_message)
             );
             const hasCustomerNotes = Boolean(order.customer_notes?.trim());
+            const isOverdue = isPendingOrderOverdue(order, pendingAlertMinutes);
 
             return (
               <div
@@ -251,6 +256,15 @@ export function StaffOrderList({
                       {isToday && (
                         <span className="rounded bg-caramel/10 text-caramel text-[10px] font-bold px-1.5 py-0.5 uppercase">
                           Today
+                        </span>
+                      )}
+                      {isOverdue && (
+                        <span
+                          className="rounded bg-destructive/15 text-destructive border border-destructive/30 text-[10px] font-bold px-1.5 py-0.5 inline-flex items-center gap-0.5 uppercase"
+                          title={`Pending for more than ${pendingAlertMinutes} minutes`}
+                        >
+                          <AlertCircle className="size-2.5" />
+                          <span>Needs Attention</span>
                         </span>
                       )}
                       {hasCakeMessage && (

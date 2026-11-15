@@ -17,6 +17,25 @@ export function getOrderPickupDateIst(
 }
 
 /**
+ * Whether a PENDING order has been waiting longer than the configured Kitchen Alert
+ * threshold (store_settings.pending_alert_minutes, GitHub issue #88). An order's PENDING
+ * clock starts at creation (its initial status is always PENDING), so created_at is the
+ * correct "pending since" timestamp. pendingAlertMinutes <= 0 never fires (the database
+ * itself requires it to be positive, but a defensive caller-supplied 0/negative value
+ * should not flag every order as overdue).
+ */
+export function isPendingOrderOverdue(
+  order: Pick<StaffOrder, "status" | "created_at">,
+  pendingAlertMinutes: number,
+  now: Date = new Date()
+): boolean {
+  if (order.status !== "PENDING" || pendingAlertMinutes <= 0) return false;
+  const createdAt = new Date(order.created_at).getTime();
+  if (Number.isNaN(createdAt)) return false;
+  return now.getTime() - createdAt > pendingAlertMinutes * 60 * 1000;
+}
+
+/**
  * Computes operational summary metrics for orders due for pickup on a given date in
  * Asia/Kolkata timezone (defaults to today in IST).
  * The Pending metric is the global pending workload across all dates, matching the staff

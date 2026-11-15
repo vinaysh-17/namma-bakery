@@ -32,6 +32,7 @@ import {
   unarchiveBusinessHourAction,
 } from "@/lib/admin/actions";
 import { formatIstDateTime, formatIstDate } from "@/lib/utils/date";
+import { parseSettingsInt } from "@/lib/admin/form-utils";
 
 interface AdminStoreOperationsViewProps {
   location: LocationInfo | null;
@@ -100,7 +101,10 @@ export function AdminStoreOperationsView({
     settings?.pending_alert_minutes?.toString() || "15"
   );
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
-  const [settingsFeedback, setSettingsFeedback] = React.useState<string | null>(null);
+  const [settingsFeedback, setSettingsFeedback] = React.useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Track last known hours for each weekday to restore on unarchive
   const lastKnownHoursRef = React.useRef<Record<number, { opens: string; closes: string }>>({});
@@ -192,23 +196,38 @@ export function AdminStoreOperationsView({
     setIsSavingSettings(true);
     setSettingsFeedback(null);
 
+    // parseSettingsInt only falls back on a blank/invalid field; a deliberately entered 0
+    // is sent through unchanged (#67). The server's Zod schema is still the final word on
+    // which values are actually valid (e.g. pending_alert_minutes must be positive).
+    const nextMaxOrdersPerSlot = parseSettingsInt(maxOrdersPerSlot, 6);
+    const nextMaxCustomPerDay = parseSettingsInt(maxCustomPerDay, 4);
+    const nextCancelCutoffHours = parseSettingsInt(cancelCutoffHours, 4);
+    const nextPendingAlertMinutes = parseSettingsInt(pendingAlertMinutes, 15);
+
     const res = await updateStoreSettingsAction({
       location_id: location.id,
       slot_minutes: slotMinutes,
-      max_orders_per_slot: parseInt(maxOrdersPerSlot, 10) || 6,
-      max_custom_per_day: parseInt(maxCustomPerDay, 10) || 4,
+      max_orders_per_slot: nextMaxOrdersPerSlot,
+      max_custom_per_day: nextMaxCustomPerDay,
       quote_validity_hours: settings?.quote_validity_hours ?? 24,
-      cancel_cutoff_hours: parseInt(cancelCutoffHours, 10) || 4,
-      pending_alert_minutes: parseInt(pendingAlertMinutes, 10) || 15,
+      cancel_cutoff_hours: nextCancelCutoffHours,
+      pending_alert_minutes: nextPendingAlertMinutes,
     });
     setIsSavingSettings(false);
 
     if (!res.success) {
-      setSettingsFeedback(res.error || "Failed to save settings.");
+      setSettingsFeedback({ type: "error", message: res.error || "Failed to save settings." });
       return;
     }
 
-    setSettingsFeedback("Settings saved successfully.");
+    // Reflect exactly what was saved (a blank field may have fallen back to a default);
+    // the form never keeps showing a value that differs from what is now in the database.
+    setMaxOrdersPerSlot(String(nextMaxOrdersPerSlot));
+    setMaxCustomPerDay(String(nextMaxCustomPerDay));
+    setCancelCutoffHours(String(nextCancelCutoffHours));
+    setPendingAlertMinutes(String(nextPendingAlertMinutes));
+
+    setSettingsFeedback({ type: "success", message: "Settings saved successfully." });
     setTimeout(() => setSettingsFeedback(null), 3000);
     onActionSuccess();
   };
@@ -506,8 +525,15 @@ export function AdminStoreOperationsView({
           </div>
 
           {settingsFeedback && (
-            <div className="p-2 rounded text-xs bg-emerald-100 text-emerald-900 border border-emerald-200">
-              {settingsFeedback}
+            <div
+              role={settingsFeedback.type === "error" ? "alert" : "status"}
+              className={`p-2 rounded text-xs border ${
+                settingsFeedback.type === "error"
+                  ? "bg-destructive/10 text-destructive border-destructive/30"
+                  : "bg-emerald-100 text-emerald-900 border-emerald-200"
+              }`}
+            >
+              {settingsFeedback.message}
             </div>
           )}
 
