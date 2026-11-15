@@ -4,17 +4,44 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { notifyOrderChanged } from "@/lib/realtime/broadcast";
-import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
+import {
+  peekRateLimit,
+  recordRateLimitHit,
+  resetRateLimit,
+  getClientIp,
+} from "@/lib/security/rate-limiter";
 import { requireStaffSession } from "./auth";
 import type { OrderStatus } from "@/lib/orders/types";
 
 export interface ActionState {
   error?: string | null;
   success?: boolean;
+  email?: string;
+}
+
+/** Helper to rethrow Next.js redirect errors so catch blocks do not swallow navigation. */
+function rethrowIfRedirect(err: unknown) {
+  if (
+    err &&
+    typeof err === "object" &&
+    "digest" in err &&
+    typeof (err as { digest: unknown }).digest === "string" &&
+    (err as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  ) {
+    throw err;
+  }
 }
 
 /**
  * Signs in a staff member and ensures they have active staff privileges in `staff_roles`.
+ *
+ * Hardened per #103:
+ * 1. Uses non-incrementing peek checks before attempting auth.
+ * 2. Successful logins do NOT consume failed-attempt quota.
+ * 3. Uses compound (IP + email) account protection (5 failed attempts per 5m) so staff
+ *    sharing a public store Wi-Fi NAT IP do not lock each other out.
+ * 4. Maintains aggregate IP protection (20 failed attempts per 15m) against credential stuffing.
+ * 5. Distinguishes network/service outages from invalid credentials without leaking email existence.
  */
 export async function staffLoginAction(
   _prevState: ActionState,
@@ -24,20 +51,39 @@ export async function staffLoginAction(
   const password = formData.get("password") as string;
 
   if (!email || !password) {
-    return { error: "Please enter both email and password." };
+    return { error: "Please enter both email and password.", email: email || "" };
   }
 
-  // 1. IP-level brute-force rate limit (5 attempts per 5 minutes)
   const clientIp = await getClientIp();
-  const loginLimit = checkRateLimit({
-    key: `staff_login:ip:${clientIp}`,
+
+  // Rate limit keys:
+  // 1. Account-targeted failure key per IP (5 failed attempts per 5 minutes)
+  const accountFailKey = `staff_login:fail:${clientIp}:${email}`;
+  // 2. Aggregate IP failure key across accounts (20 failed attempts per 15 minutes)
+  const ipFailKey = `staff_login:ip_fail:${clientIp}`;
+
+  // Non-incrementing pre-check: verify neither account nor IP is currently locked out
+  const accountLimit = peekRateLimit({
+    key: accountFailKey,
     maxRequests: 5,
     windowMs: 5 * 60 * 1000,
   });
-
-  if (!loginLimit.allowed) {
+  if (!accountLimit.allowed) {
     return {
-      error: `Too many login attempts. Please wait ${loginLimit.retryAfterSeconds} seconds before trying again.`,
+      error: `Too many failed login attempts for this account. Please wait ${accountLimit.retryAfterSeconds} seconds before trying again.`,
+      email,
+    };
+  }
+
+  const ipLimit = peekRateLimit({
+    key: ipFailKey,
+    maxRequests: 20,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (!ipLimit.allowed) {
+    return {
+      error: `Too many failed login attempts from this network. Please wait ${ipLimit.retryAfterSeconds} seconds before trying again.`,
+      email,
     };
   }
 
@@ -49,7 +95,36 @@ export async function staffLoginAction(
     });
 
     if (error || !data.user) {
-      return { error: "Invalid email or password. Please try again." };
+      // Record failed authentication attempt for both specific account and aggregate IP
+      recordRateLimitHit(accountFailKey);
+      recordRateLimitHit(ipFailKey);
+
+      // Differentiate service/network failures from invalid credentials
+      const msg = error?.message?.toLowerCase() || "";
+      const status = error?.status;
+
+      if (status === 429 || msg.includes("too many requests") || msg.includes("rate limit")) {
+        return {
+          error: "Too many authentication requests. Please wait a moment and try again.",
+          email,
+        };
+      }
+
+      if (
+        (status && status >= 500) ||
+        msg.includes("fetch failed") ||
+        msg.includes("network") ||
+        msg.includes("timeout") ||
+        msg.includes("service unavailable")
+      ) {
+        return {
+          error: "Unable to connect to authentication service. Please check your connection and try again.",
+          email,
+        };
+      }
+
+      // Default for credential mismatch: preserve confidentiality (never reveal if email exists)
+      return { error: "Invalid email or password. Please try again.", email };
     }
 
     // Explicitly verify active staff role in staff_roles
@@ -66,8 +141,12 @@ export async function staffLoginAction(
       return {
         error:
           "Access denied. Only authorized bakery staff members can access the staff dashboard.",
+        email,
       };
     }
+
+    // On successful staff authentication: reset failed attempts for this account
+    resetRateLimit(accountFailKey);
 
     // Record staff login in audit_logs
     try {
@@ -91,7 +170,7 @@ export async function staffLoginAction(
     }
   } catch (err) {
     console.error("[staffLoginAction] Login error:", err);
-    return { error: "An unexpected error occurred. Please try again later." };
+    return { error: "An unexpected error occurred. Please try again later.", email };
   }
 
   redirect("/staff");
@@ -141,15 +220,16 @@ export async function transitionOrderAction(params: {
   note?: string;
   estimatedReadyAt?: string | null;
 }): Promise<{ success: boolean; error?: string; stale?: boolean }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Forbidden: Staff privileges required." };
-    }
-    if (!params.expectedFrom) {
-      return { success: false, error: "Please refresh the page and try again." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Forbidden: Staff privileges required." };
+  }
+  if (!params.expectedFrom) {
+    return { success: false, error: "Please refresh the page and try again." };
+  }
 
+  try {
     const supabase = await createClient();
 
     // The persisted status is the source of truth (the screen can be out of date, e.g. a
@@ -287,6 +367,7 @@ export async function transitionOrderAction(params: {
     await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[transitionOrderAction] Execution failure:", err);
     return {
       success: false,
@@ -303,12 +384,13 @@ export async function completeOrderAndRecordPaymentAction(params: {
   orderId: string;
   note?: string;
 }): Promise<{ success: boolean; error?: string; stale?: boolean }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Forbidden: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Forbidden: Staff privileges required." };
+  }
 
+  try {
     const supabase = await createClient();
 
     // Verify order exists and is eligible for completion
@@ -376,6 +458,7 @@ export async function completeOrderAndRecordPaymentAction(params: {
     await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[completeOrderAndRecordPaymentAction] Execution failure:", err);
     return {
       success: false,
@@ -391,12 +474,13 @@ export async function recordStorePaymentAction(params: {
   orderId: string;
   amountPaise: number;
 }): Promise<{ success: boolean; error?: string }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Forbidden: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Forbidden: Staff privileges required." };
+  }
 
+  try {
     const supabase = await createClient();
     const { error } = await supabase.rpc("record_store_payment", {
       p_order_id: params.orderId,
@@ -424,6 +508,7 @@ export async function recordStorePaymentAction(params: {
     await notifyOrderChanged(params.orderId);
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[recordStorePaymentAction] Execution failure:", err);
     return {
       success: false,
@@ -439,12 +524,13 @@ export async function addInternalNoteAction(params: {
   orderId: string;
   body: string;
 }): Promise<{ success: boolean; error?: string }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff || !session.user) {
-      return { success: false, error: "Forbidden: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff || !session.user) {
+    return { success: false, error: "Forbidden: Staff privileges required." };
+  }
 
+  try {
     const trimmed = params.body.trim();
     if (!trimmed || trimmed.length > 1000) {
       return {
@@ -468,6 +554,7 @@ export async function addInternalNoteAction(params: {
     revalidatePath("/staff");
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[addInternalNoteAction] Execution failure:", err);
     return { success: false, error: "Failed to save note." };
   }

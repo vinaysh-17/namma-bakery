@@ -4,10 +4,11 @@ interface RateLimitRecord {
   timestamps: number[];
 }
 
-interface RateLimitOptions {
+export interface RateLimitOptions {
   key: string;
   maxRequests: number;
   windowMs: number;
+  record?: boolean;
 }
 
 export interface RateLimitResult {
@@ -40,31 +41,31 @@ function purgeStaleRecords(now: number, maxRetentionMs: number) {
 }
 
 /**
- * Checks and updates rate limit state for a given key using a sliding window algorithm.
+ * Checks and optionally updates rate limit state for a given key using a sliding window algorithm.
  *
  * Characteristics:
  * - In-memory, zero-dependency, zero external cost.
- * - Enforces sliding window rate limits on Next.js server actions.
+ * - Supports non-incrementing peek checks (record: false) for two-stage auth validation.
  * - Prunes stale memory automatically.
  */
 export function checkRateLimit(options: RateLimitOptions): RateLimitResult {
-  const { key, maxRequests, windowMs } = options;
+  const { key, maxRequests, windowMs, record = true } = options;
   const now = Date.now();
 
   purgeStaleRecords(now, windowMs * 2);
 
-  let record = rateLimitStore.get(key);
-  if (!record) {
-    record = { timestamps: [] };
-    rateLimitStore.set(key, record);
+  let bucket = rateLimitStore.get(key);
+  if (!bucket) {
+    bucket = { timestamps: [] };
+    rateLimitStore.set(key, bucket);
   }
 
   // Filter timestamps within current window
   const windowStart = now - windowMs;
-  record.timestamps = record.timestamps.filter((ts) => ts > windowStart);
+  bucket.timestamps = bucket.timestamps.filter((ts) => ts > windowStart);
 
-  if (record.timestamps.length >= maxRequests) {
-    const oldest = record.timestamps[0];
+  if (bucket.timestamps.length >= maxRequests) {
+    const oldest = bucket.timestamps[0];
     const retryAfterSeconds = Math.ceil((oldest + windowMs - now) / 1000);
     return {
       allowed: false,
@@ -73,12 +74,41 @@ export function checkRateLimit(options: RateLimitOptions): RateLimitResult {
     };
   }
 
-  record.timestamps.push(now);
+  if (record) {
+    bucket.timestamps.push(now);
+  }
+
   return {
     allowed: true,
-    remaining: maxRequests - record.timestamps.length,
+    remaining: Math.max(0, maxRequests - bucket.timestamps.length),
     retryAfterSeconds: 0,
   };
+}
+
+/**
+ * Inspects whether a rate limit threshold has been exceeded without recording an attempt.
+ */
+export function peekRateLimit(options: Omit<RateLimitOptions, "record">): RateLimitResult {
+  return checkRateLimit({ ...options, record: false });
+}
+
+/**
+ * Records an attempt for a rate limit bucket.
+ */
+export function recordRateLimitHit(key: string): void {
+  let bucket = rateLimitStore.get(key);
+  if (!bucket) {
+    bucket = { timestamps: [] };
+    rateLimitStore.set(key, bucket);
+  }
+  bucket.timestamps.push(Date.now());
+}
+
+/**
+ * Resets rate limit attempts for a given key (e.g. upon successful authentication).
+ */
+export function resetRateLimit(key: string): void {
+  rateLimitStore.delete(key);
 }
 
 /**

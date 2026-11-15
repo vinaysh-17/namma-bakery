@@ -3515,6 +3515,155 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     "Staff #70: migration 0027 hardens protect_last_admin trigger against direct table mutations"
   );
 
+  // --- 25. Batch 4: Staff Authentication & Session Resilience (#99, #101, #102, #103) ---
+  console.log("\n--- 25. Batch 4: Staff Authentication & Session Resilience (#99, #101, #102, #103) ---");
+
+  // #102: Failed staff login preserves email field and clears password
+  const staffLoginFormSrc = fs.readFileSync(
+    path.join(process.cwd(), "components/staff/staff-login-form.tsx"),
+    "utf8"
+  );
+  assert(
+    staffLoginFormSrc.includes("const [email, setEmail] = React.useState") &&
+      staffLoginFormSrc.includes("value={email}") &&
+      staffLoginFormSrc.includes("onChange={(e) => setEmail(e.target.value)}"),
+    "Staff #102: StaffLoginForm controls email input state to prevent React 19 form reset from wiping email"
+  );
+  assert(
+    staffLoginFormSrc.includes("key={state?.error || \"pwd\"}") &&
+      staffLoginFormSrc.includes('defaultValue=""'),
+    "Staff #102: StaffLoginForm explicitly resets password field on error via key unmount while preserving email"
+  );
+
+  // #101: Expired staff sessions redirect to /staff/login without being swallowed
+  const staffActionsSrc = fs.readFileSync(
+    path.join(process.cwd(), "lib/staff/actions.ts"),
+    "utf8"
+  );
+  assert(
+    staffActionsSrc.includes("rethrowIfRedirect") &&
+      staffActionsSrc.includes("digest.startsWith(\"NEXT_REDIRECT\")"),
+    "Staff #101: staff/actions.ts contains rethrowIfRedirect guard to prevent catch blocks from swallowing navigation"
+  );
+  assert(
+    staffActionsSrc.includes("transitionOrderAction") &&
+      /export async function transitionOrderAction[\s\S]*?const session = await requireStaffSession\(\);[\s\S]*?try \{/.test(
+        staffActionsSrc
+      ),
+    "Staff #101: transitionOrderAction invokes requireStaffSession outside the try block"
+  );
+  assert(
+    staffActionsSrc.includes("completeOrderAndRecordPaymentAction") &&
+      /export async function completeOrderAndRecordPaymentAction[\s\S]*?const session = await requireStaffSession\(\);[\s\S]*?try \{/.test(
+        staffActionsSrc
+      ),
+    "Staff #101: completeOrderAndRecordPaymentAction invokes requireStaffSession outside the try block"
+  );
+  assert(
+    staffActionsSrc.includes("recordStorePaymentAction") &&
+      /export async function recordStorePaymentAction[\s\S]*?const session = await requireStaffSession\(\);[\s\S]*?try \{/.test(
+        staffActionsSrc
+      ),
+    "Staff #101: recordStorePaymentAction invokes requireStaffSession outside the try block"
+  );
+  assert(
+    staffActionsSrc.includes("addInternalNoteAction") &&
+      /export async function addInternalNoteAction[\s\S]*?const session = await requireStaffSession\(\);[\s\S]*?try \{/.test(
+        staffActionsSrc
+      ),
+    "Staff #101: addInternalNoteAction invokes requireStaffSession outside the try block"
+  );
+
+  // #103: Hardened rate limiting: non-incrementing peek, failed-only recording, compound keying & error separation
+  const rateLimiterSrc = fs.readFileSync(
+    path.join(process.cwd(), "lib/security/rate-limiter.ts"),
+    "utf8"
+  );
+  assert(
+    rateLimiterSrc.includes("export function peekRateLimit") &&
+      rateLimiterSrc.includes("export function recordRateLimitHit") &&
+      rateLimiterSrc.includes("export function resetRateLimit"),
+    "Staff #103: rate-limiter exports peekRateLimit, recordRateLimitHit, and resetRateLimit"
+  );
+
+  // Behavioral test for non-incrementing peek checks
+  const { peekRateLimit, recordRateLimitHit, resetRateLimit } = await import("../lib/security/rate-limiter");
+  const testPeekKey = "test_staff_peek_key";
+  resetRateLimit(testPeekKey);
+
+  // 10 consecutive peek checks with limit=3 must never record an attempt
+  for (let i = 0; i < 10; i++) {
+    const res = peekRateLimit({ key: testPeekKey, maxRequests: 3, windowMs: 60000 });
+    assert(res.allowed && res.remaining === 3, "Staff #103: peekRateLimit does not consume rate limit quota");
+  }
+
+  // Record 3 genuine failed hits
+  recordRateLimitHit(testPeekKey);
+  recordRateLimitHit(testPeekKey);
+  recordRateLimitHit(testPeekKey);
+  const blockedPeek = peekRateLimit({ key: testPeekKey, maxRequests: 3, windowMs: 60000 });
+  assert(!blockedPeek.allowed, "Staff #103: peekRateLimit correctly identifies when bucket reaches threshold");
+
+  // Reset bucket (simulating successful login)
+  resetRateLimit(testPeekKey);
+  const unblockedPeek = peekRateLimit({ key: testPeekKey, maxRequests: 3, windowMs: 60000 });
+  assert(unblockedPeek.allowed && unblockedPeek.remaining === 3, "Staff #103: resetRateLimit clears bucket on successful login");
+
+  // Behavioral test: shared IP isolation (User A fails 5 times, User B from same IP is NOT blocked)
+  const sharedIp = "10.0.0.99";
+  const userAKey = `staff_login:fail:${sharedIp}:usera@test.com`;
+  const userBKey = `staff_login:fail:${sharedIp}:userb@test.com`;
+  resetRateLimit(userAKey);
+  resetRateLimit(userBKey);
+
+  for (let i = 0; i < 5; i++) {
+    recordRateLimitHit(userAKey);
+  }
+  const userALimit = peekRateLimit({ key: userAKey, maxRequests: 5, windowMs: 300000 });
+  const userBLimit = peekRateLimit({ key: userBKey, maxRequests: 5, windowMs: 300000 });
+  assert(!userALimit.allowed, "Staff #103: User A is locked out after 5 failed attempts");
+  assert(userBLimit.allowed && userBLimit.remaining === 5, "Staff #103: User B on shared shop Wi-Fi IP is NOT blocked by User A failures");
+  resetRateLimit(userAKey);
+  resetRateLimit(userBKey);
+
+  // Error differentiation in staffLoginAction
+  assert(
+    staffActionsSrc.includes("Unable to connect to authentication service") &&
+      staffActionsSrc.includes("Too many authentication requests") &&
+      staffActionsSrc.includes("Invalid email or password. Please try again."),
+    "Staff #103: staffLoginAction differentiates network outages and rate limits from credentials errors"
+  );
+  assert(
+    !staffActionsSrc.includes("Email not found") && !staffActionsSrc.includes("User does not exist"),
+    "Staff #103: staffLoginAction preserves confidentiality and never reveals whether an email exists"
+  );
+
+  // #99: Next.js 16 Proxy implementation & Supabase session refresh
+  const proxyPath = path.join(process.cwd(), "proxy.ts");
+  assert(fs.existsSync(proxyPath), "Staff #99: proxy.ts exists at project root for Next.js 16");
+  const proxySrc = fs.readFileSync(proxyPath, "utf8");
+  assert(
+    proxySrc.includes("export async function proxy") &&
+      proxySrc.includes("config = {") &&
+      proxySrc.includes("matcher:"),
+    "Staff #99: proxy.ts exports proxy handler and config matcher"
+  );
+
+  const supabaseProxyPath = path.join(process.cwd(), "lib/supabase/proxy.ts");
+  assert(fs.existsSync(supabaseProxyPath), "Staff #99: lib/supabase/proxy.ts exists");
+  const supabaseProxySrc = fs.readFileSync(supabaseProxyPath, "utf8");
+  assert(
+    supabaseProxySrc.includes("createServerClient") &&
+      supabaseProxySrc.includes("supabase.auth.getUser()") &&
+      supabaseProxySrc.includes("request.cookies.getAll()") &&
+      supabaseProxySrc.includes("supabaseResponse.cookies.set"),
+    "Staff #99: lib/supabase/proxy.ts synchronizes cookies and refreshes Supabase session without dropping tokens"
+  );
+  assert(
+    !supabaseProxySrc.includes(".from(") && !supabaseProxySrc.includes("is_admin"),
+    "Staff #99: proxy avoids database table/role queries to maintain sub-millisecond routing performance"
+  );
+
   console.log("\n========================================================");
   console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
   console.log("========================================================\n");

@@ -16,6 +16,7 @@ export function StaffLoginForm() {
     staffLoginAction,
     initialState
   );
+  const [email, setEmail] = React.useState("");
 
   return (
     <div className="w-full max-w-md mx-auto space-y-3">
@@ -58,6 +59,8 @@ export function StaffLoginForm() {
                 type="email"
                 required
                 autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="staff@nammabakery.com"
                 className="w-full min-h-[44px] rounded-sm border border-border bg-background pl-10 pr-3.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel hover:border-caramel/50 transition-colors"
               />
@@ -74,11 +77,13 @@ export function StaffLoginForm() {
             <div className="relative">
               <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <input
+                key={state?.error || "pwd"}
                 id="password"
                 name="password"
                 type={showPassword ? "text" : "password"}
                 required
                 autoComplete="current-password"
+                defaultValue=""
                 placeholder="••••••••"
                 className="w-full min-h-[44px] rounded-sm border border-border bg-background pl-10 pr-10 text-sm text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel hover:border-caramel/50 transition-colors"
               />
