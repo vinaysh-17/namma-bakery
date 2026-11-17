@@ -33,12 +33,20 @@ export function HistoryDetailModal({ kind, id, onClose }: HistoryDetailModalProp
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const res = await getHistoryDetailAction({ kind, id });
-      if (cancelled) return;
-      setState({
-        detail: res.success && res.data ? res.data : null,
-        error: res.success ? null : res.error ?? "Could not load the details.",
-      });
+      try {
+        const res = await getHistoryDetailAction({ kind, id });
+        if (cancelled) return;
+        setState({
+          detail: res.success && res.data ? res.data : null,
+          error: res.success ? null : res.error ?? "Could not load the details.",
+        });
+      } catch {
+        if (cancelled) return;
+        setState({
+          detail: null,
+          error: "Could not reach the server. Check your connection and try again.",
+        });
+      }
     })();
     return () => {
       cancelled = true;

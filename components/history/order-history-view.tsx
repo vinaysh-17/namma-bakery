@@ -123,22 +123,31 @@ export function OrderHistoryView({ canDelete }: { canDelete: boolean }) {
     if (!currentRange || !requestKey) return;
     let cancelled = false;
     void (async () => {
-      const res = await listStaffOrderHistoryAction({
-        from: currentRange.from,
-        to: currentRange.to,
-        type,
-      });
-      if (cancelled) return;
-      setResult({
-        key: requestKey,
-        list: res.success && res.data ? res.data : null,
-        error: res.success ? null : res.error ?? "Could not load order history.",
-        range: currentRange,
-      });
-      if (res.success && res.data) {
-        // keep only selections that still exist in the refreshed list
-        const ids = new Set(res.data.items.map((o) => o.id));
-        setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))));
+      try {
+        const res = await listStaffOrderHistoryAction({
+          from: currentRange.from,
+          to: currentRange.to,
+          type,
+        });
+        if (cancelled) return;
+        setResult({
+          key: requestKey,
+          list: res.success && res.data ? res.data : null,
+          error: res.success ? null : res.error ?? "Could not load order history.",
+          range: currentRange,
+        });
+        if (res.success && res.data) {
+          const ids = new Set(res.data.items.map((o) => o.id));
+          setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))));
+        }
+      } catch {
+        if (cancelled) return;
+        setResult({
+          key: requestKey,
+          list: null,
+          error: "Could not reach the server. Check your connection and try again.",
+          range: currentRange,
+        });
       }
     })();
     return () => {
@@ -174,18 +183,25 @@ export function OrderHistoryView({ canDelete }: { canDelete: boolean }) {
     setNotice(null);
     setConfirmText("");
     setDialog({ ids, method, label, preview: null, loading: true, error: null });
-    // The preview comes from the CURRENT database state, not the cached list
-    const res = await previewOrderDeletionAction({ orderIds: ids });
-    setDialog((prev) =>
-      prev
-        ? {
-            ...prev,
-            loading: false,
-            preview: res.success && res.data ? res.data : null,
-            error: res.success ? null : res.error ?? "Could not prepare the preview.",
-          }
-        : prev
-    );
+    try {
+      const res = await previewOrderDeletionAction({ orderIds: ids });
+      setDialog((prev) =>
+        prev
+          ? {
+              ...prev,
+              loading: false,
+              preview: res.success && res.data ? res.data : null,
+              error: res.success ? null : res.error ?? "Could not prepare the preview.",
+            }
+          : prev
+      );
+    } catch {
+      setDialog((prev) =>
+        prev
+          ? { ...prev, loading: false, error: "Could not reach the server. Check your connection and try again." }
+          : prev
+      );
+    }
   };
 
   const closeDialog = () => {
@@ -210,29 +226,37 @@ export function OrderHistoryView({ canDelete }: { canDelete: boolean }) {
   const confirmDelete = async () => {
     if (!dialog || !canConfirm) return;
     setIsDeleting(true);
-    const res = await deleteOrderHistoryAction({
-      orderIds: previewRows.map((o) => o.id),
-      method: dialog.method,
-      rangeLabel: dialog.label.slice(0, 80),
-      confirmText: needsTyped ? confirmText : undefined,
-    });
-    setIsDeleting(false);
+    try {
+      const res = await deleteOrderHistoryAction({
+        orderIds: previewRows.map((o) => o.id),
+        method: dialog.method,
+        rangeLabel: dialog.label.slice(0, 80),
+        confirmText: needsTyped ? confirmText : undefined,
+      });
+      setIsDeleting(false);
 
-    if (!res.success) {
-      // Do not claim success; keep the selection and the dialog open
-      setDialog((prev) => (prev ? { ...prev, error: res.error ?? "Deletion failed." } : prev));
-      return;
+      if (!res.success) {
+        setDialog((prev) => (prev ? { ...prev, error: res.error ?? "Deletion failed." } : prev));
+        return;
+      }
+
+      const n = res.data?.deleted ?? 0;
+      const warning = res.data?.warning;
+      setDialog(null);
+      setConfirmText("");
+      setSelected(new Set());
+      setNotice(
+        `${n} ${n === 1 ? "order" : "orders"} deleted successfully.${warning ? ` ${warning}` : ""}`
+      );
+      setReloadNonce((n) => n + 1);
+    } catch {
+      setIsDeleting(false);
+      setDialog((prev) =>
+        prev
+          ? { ...prev, error: "Could not reach the server. Check your connection and try again." }
+          : prev
+      );
     }
-
-    const n = res.data?.deleted ?? 0;
-    const warning = res.data?.warning;
-    setDialog(null);
-    setConfirmText("");
-    setSelected(new Set());
-    setNotice(
-      `${n} ${n === 1 ? "order" : "orders"} deleted successfully.${warning ? ` ${warning}` : ""}`
-    );
-    setReloadNonce((n) => n + 1);
   };
 
   const orderSummary = (rows: { order_number: string }[]) => {
