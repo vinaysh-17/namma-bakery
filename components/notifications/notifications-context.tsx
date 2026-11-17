@@ -117,11 +117,15 @@ export function NotificationsProvider({
 
   // Unlock audio on the first user gesture (browser autoplay policy). Without prior
   // interaction a realtime chime cannot play; this never tries to bypass that.
+  // Listeners stay registered until unlock succeeds so a failed resume retries on
+  // the next gesture instead of silently giving up.
   useEffect(() => {
-    const unlock = () => {
-      primeNotificationAudio();
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
+    const unlock = async () => {
+      const unlocked = await primeNotificationAudio();
+      if (unlocked) {
+        window.removeEventListener("pointerdown", unlock);
+        window.removeEventListener("keydown", unlock);
+      }
     };
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);

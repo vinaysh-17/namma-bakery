@@ -30,17 +30,20 @@ function getAudioContext(): AudioContext | null {
  * real user gesture (click / key press) so the AudioContext is created and resumed
  * while that permission exists; later notification chimes can then play. This does not
  * bypass autoplay policy — if the user never interacts, the chime stays silent.
+ *
+ * Returns true when the context is running (or unavailable — no point retrying),
+ * false when it is still suspended and the caller should retry on the next gesture.
  */
-export function primeNotificationAudio(): void {
+export async function primeNotificationAudio(): Promise<boolean> {
   try {
     const ctx = getAudioContext();
-    if (ctx && ctx.state === "suspended") {
-      ctx.resume().catch(() => {
-        // Still blocked; will retry on the next gesture
-      });
+    if (!ctx) return true;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
     }
+    return ctx.state === "running";
   } catch {
-    // ignore
+    return true;
   }
 }
 
