@@ -1,9 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { getStaffSession } from "@/lib/staff/auth";
 import { getPortalNotifications } from "./queries";
-import type { PortalNotification, NotificationType } from "./types";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Server action to get latest notifications and unread count.
@@ -17,6 +18,15 @@ export async function getPortalNotificationsAction() {
  */
 export async function markNotificationAsReadAction(id: string) {
   try {
+    if (!id || !UUID_RE.test(id)) {
+      return { success: false, error: "Failed to mark notification as read." };
+    }
+
+    const session = await getStaffSession();
+    if (!session.isStaff) {
+      return { success: false, error: "Failed to mark notification as read." };
+    }
+
     const supabase = await createClient();
     const now = new Date().toISOString();
 
@@ -30,7 +40,7 @@ export async function markNotificationAsReadAction(id: string) {
 
     if (error) {
       console.error("[markNotificationAsReadAction] Update error:", error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: "Failed to mark notification as read." };
     }
 
     return { success: true };
@@ -45,6 +55,11 @@ export async function markNotificationAsReadAction(id: string) {
  */
 export async function markAllNotificationsAsReadAction() {
   try {
+    const session = await getStaffSession();
+    if (!session.isStaff) {
+      return { success: false, error: "Failed to mark all notifications as read." };
+    }
+
     const supabase = await createClient();
     const now = new Date().toISOString();
 
@@ -58,7 +73,7 @@ export async function markAllNotificationsAsReadAction() {
 
     if (error) {
       console.error("[markAllNotificationsAsReadAction] Update error:", error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: "Failed to mark all notifications as read." };
     }
 
     return { success: true };
@@ -67,43 +82,3 @@ export async function markAllNotificationsAsReadAction() {
     return { success: false, error: "Failed to mark all notifications as read." };
   }
 }
-
-/**
- * Backend utility to create a portal notification using service role.
- * Useful for backend workflows or explicit notification triggers.
- */
-export async function createPortalNotification(params: {
-  type: NotificationType;
-  title: string;
-  message: string;
-  link_url: string;
-  related_entity_id?: string;
-}): Promise<{ success: boolean; notification?: PortalNotification; error?: string }> {
-  try {
-    const supabase = createAdminClient();
-
-    const { data, error } = await supabase
-      .from("portal_notifications")
-      .insert({
-        type: params.type,
-        title: params.title,
-        message: params.message,
-        link_url: params.link_url,
-        related_entity_id: params.related_entity_id || null,
-        is_read: false,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error("[createPortalNotification] Insert error:", error.message);
-      return { success: false, error: error.message };
-    }
-
-    return { success: true, notification: data as PortalNotification };
-  } catch (err) {
-    console.error("[createPortalNotification] Unexpected exception:", err);
-    return { success: false, error: "Failed to create portal notification." };
-  }
-}
-

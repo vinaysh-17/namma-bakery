@@ -1,3 +1,11 @@
+const SAFE_HREF_RE = /^\/(staff|admin)(\?[A-Za-z0-9_=&%.\-]*)?$/;
+
+export function safeNotificationHref(url: string | null | undefined): string | null {
+  if (!url || typeof url !== "string") return null;
+  if (!SAFE_HREF_RE.test(url)) return null;
+  return url;
+}
+
 /**
  * Formats a timestamp into a concise relative time string.
  * Examples: "Just now", "2m ago", "1h ago", "Yesterday", "3d ago".
@@ -52,4 +60,3 @@ export function formatRelativeTime(
     return "";
   }
 }
-

@@ -58,10 +58,11 @@ select lives_ok(
 );
 
 -- 3. Anonymous users cannot select from store_settings directly (RLS denies access)
-select is(
-  (select count(*) from store_settings),
-  0::bigint,
-  'Anonymous users see 0 rows from store_settings directly due to RLS'
+select throws_ok(
+  $$ select count(*) from store_settings $$,
+  '42501',
+  'permission denied for table store_settings',
+  'Anonymous users cannot access store_settings (permission denied)'
 );
 reset role;
 

@@ -2,6 +2,7 @@ import "server-only";
 import { createHmac } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { getSigningSecret } from "@/lib/security/secrets";
 
 /**
  * Live-update "ping" channel (Supabase Realtime Broadcast).
@@ -21,7 +22,7 @@ const PING_EVENT = "changed";
 const SEND_TIMEOUT_MS = 3000;
 
 function topicFor(kind: string, id: string): string {
-  const secret = process.env.SUPABASE_SECRET_KEY || "";
+  const secret = getSigningSecret();
   const digest = createHmac("sha256", secret)
     .update(`${kind}:${id}`)
     .digest("hex")

@@ -228,6 +228,9 @@ export async function transitionOrderAction(params: {
   if (!params.expectedFrom) {
     return { success: false, error: "Please refresh the page and try again." };
   }
+  if (params.note && params.note.length > 1000) {
+    return { success: false, error: "Note must be 1,000 characters or fewer." };
+  }
 
   try {
     const supabase = await createClient();

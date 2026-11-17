@@ -28,6 +28,8 @@ import {
   maskPhoneNumber,
 } from "../lib/custom-cake/tracking-session";
 import { checkRateLimit } from "../lib/security/rate-limiter";
+import { safeNotificationHref } from "../lib/notifications/utils";
+import { getSigningSecret } from "../lib/security/secrets";
 import {
   DEFAULT_LOCATION_SLUG,
   getAvailablePickupSlots,
@@ -994,6 +996,9 @@ assert(
 );
 
 // HMAC Token creation & verification
+// Set a scoped test secret (the hard-coded fallback was removed in Batch 1)
+const originalSecret = process.env.SUPABASE_SECRET_KEY;
+process.env.SUPABASE_SECRET_KEY = "test-secret-key-for-hmac-token-verification-must-be-at-least-32-chars";
 const testPhone = "9876543210";
 const testEnquiry = "CC1022";
 const validToken = createTrackingSessionToken({
@@ -1024,6 +1029,13 @@ assert(
   verifyTrackingSessionToken(forgedToken) === null,
   "Tracking Session: Reject token with forged payload"
 );
+
+// Restore original secret
+if (originalSecret !== undefined) {
+  process.env.SUPABASE_SECRET_KEY = originalSecret;
+} else {
+  delete process.env.SUPABASE_SECRET_KEY;
+}
 
 // Phone masking
 assert(
@@ -4385,6 +4397,158 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     test016Src.includes("Converted custom cake order does NOT generate a duplicate NEW_ORDER notification") &&
       test016Src.includes("Regular order generates exactly one portal notification"),
     "Notification #100: pgTAP test 016 verifies both regular order notification and custom cake suppression"
+  );
+
+  // ======================================================================
+  // Section 28: Batch 1 Security Hardening
+  // ======================================================================
+  console.log("\n--- Section 28: Batch 1 Security Hardening ---");
+
+  // 28.1: getSigningSecret throws when SUPABASE_SECRET_KEY is missing
+  const savedKey = process.env.SUPABASE_SECRET_KEY;
+  delete process.env.SUPABASE_SECRET_KEY;
+  try {
+    getSigningSecret();
+    assert(false, "Security #P2-6: getSigningSecret throws when SUPABASE_SECRET_KEY is missing");
+  } catch (e) {
+    assert(
+      e instanceof Error && e.message.includes("missing or too short"),
+      "Security #P2-6: getSigningSecret throws when SUPABASE_SECRET_KEY is missing"
+    );
+  }
+
+  // 28.2: getSigningSecret throws when secret is too short
+  process.env.SUPABASE_SECRET_KEY = "short";
+  try {
+    getSigningSecret();
+    assert(false, "Security #P2-6: getSigningSecret throws when secret is too short");
+  } catch (e) {
+    assert(
+      e instanceof Error && e.message.includes("missing or too short"),
+      "Security #P2-6: getSigningSecret throws when secret is too short"
+    );
+  }
+
+  // 28.3: getSigningSecret returns valid secret
+  process.env.SUPABASE_SECRET_KEY = "test-secret-key-for-hmac-token-verification-must-be-at-least-32-chars";
+  assert(
+    getSigningSecret() === "test-secret-key-for-hmac-token-verification-must-be-at-least-32-chars",
+    "Security #P2-6: getSigningSecret returns secret when valid"
+  );
+
+  // 28.4: verifyTrackingSessionToken returns null when secret is missing (fail closed)
+  const tokenWithSecret = createTrackingSessionToken({ phone: "9845000001", verifiedRequestNumber: "CC100" });
+  delete process.env.SUPABASE_SECRET_KEY;
+  assert(
+    verifyTrackingSessionToken(tokenWithSecret) === null,
+    "Security #P2-6: verifyTrackingSessionToken returns null when secret is missing (fail closed)"
+  );
+
+  // 28.5: tokens signed with the old fallback are rejected
+  process.env.SUPABASE_SECRET_KEY = "test-secret-key-for-hmac-token-verification-must-be-at-least-32-chars";
+  // Simulate a token signed with the old fallback
+  const crypto = await import("node:crypto");
+  const fakePayloadObj = { phone: "9845000001", verifiedRequestNumber: "CC100", issuedAt: Date.now(), expiresAt: Date.now() + 7200000 };
+  const fakePayloadB64 = Buffer.from(JSON.stringify(fakePayloadObj)).toString("base64url");
+  const oldFallbackHmac = crypto.createHmac("sha256", "namma-bakery-local-tracking-secret-key-fallback").update(fakePayloadB64).digest("base64url");
+  const oldFallbackToken = fakePayloadB64 + "." + oldFallbackHmac;
+  assert(
+    verifyTrackingSessionToken(oldFallbackToken) === null,
+    "Security #P2-6: tokens signed with old hard-coded fallback are rejected"
+  );
+
+  // Restore
+  if (savedKey !== undefined) {
+    process.env.SUPABASE_SECRET_KEY = savedKey;
+  } else {
+    delete process.env.SUPABASE_SECRET_KEY;
+  }
+
+  // 28.6-28.12: safeNotificationHref validation
+  assert(
+    safeNotificationHref("/staff?tab=ORDERS&orderId=abc-123") === "/staff?tab=ORDERS&orderId=abc-123",
+    "Security #P2-4: safeNotificationHref accepts valid staff URL"
+  );
+  assert(
+    safeNotificationHref("/admin") === "/admin",
+    "Security #P2-4: safeNotificationHref accepts bare /admin"
+  );
+  assert(
+    safeNotificationHref("/staff") === "/staff",
+    "Security #P2-4: safeNotificationHref accepts bare /staff"
+  );
+  assert(
+    safeNotificationHref("https://evil.example/staff") === null,
+    "Security #P2-4: safeNotificationHref rejects https:// URLs"
+  );
+  assert(
+    safeNotificationHref("//evil.com/staff") === null,
+    "Security #P2-4: safeNotificationHref rejects protocol-relative URLs"
+  );
+  assert(
+    safeNotificationHref("javascript:alert(1)") === null,
+    "Security #P2-4: safeNotificationHref rejects javascript: URLs"
+  );
+  assert(
+    safeNotificationHref(null) === null,
+    "Security #P2-4: safeNotificationHref returns null for null input"
+  );
+
+  // 28.13: createPortalNotification is removed from actions.ts
+  const actionsPath = path.join(process.cwd(), "lib/notifications/actions.ts");
+  const actionsSrc = fs.readFileSync(actionsPath, "utf8");
+  assert(
+    !actionsSrc.includes("createPortalNotification"),
+    "Security #P2-5: createPortalNotification is removed from notifications/actions.ts"
+  );
+  assert(
+    !actionsSrc.includes("createAdminClient"),
+    "Security #P2-5: createAdminClient import is removed from notifications/actions.ts"
+  );
+
+  // 28.14: notifications/actions.ts uses getStaffSession for authorization
+  assert(
+    actionsSrc.includes("getStaffSession"),
+    "Security #P2-4: notification actions import getStaffSession for staff authorization"
+  );
+
+  // 28.15: secrets.ts exists and has proper validation
+  const secretsPath = path.join(process.cwd(), "lib/security/secrets.ts");
+  const secretsSrc = fs.readFileSync(secretsPath, "utf8");
+  assert(
+    secretsSrc.includes("SUPABASE_SECRET_KEY") && secretsSrc.includes("throw"),
+    "Security #P2-6: lib/security/secrets.ts validates SUPABASE_SECRET_KEY and throws on failure"
+  );
+
+  // 28.16: tracking-session.ts no longer has insecure fallbacks
+  const trackingPath = path.join(process.cwd(), "lib/custom-cake/tracking-session.ts");
+  const trackingSrc = fs.readFileSync(trackingPath, "utf8");
+  assert(
+    !trackingSrc.includes("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") &&
+    !trackingSrc.includes("namma-bakery-local-tracking-secret-key-fallback"),
+    "Security #P2-6: tracking-session.ts no longer has insecure signing fallbacks"
+  );
+
+  // 28.17: broadcast.ts no longer has empty-string fallback
+  const broadcastPath = path.join(process.cwd(), "lib/realtime/broadcast.ts");
+  const broadcastSrc = fs.readFileSync(broadcastPath, "utf8");
+  assert(
+    !broadcastSrc.includes('|| ""') && broadcastSrc.includes("getSigningSecret"),
+    "Security #P2-6: broadcast.ts uses getSigningSecret instead of empty-string fallback"
+  );
+
+  // 28.18: migration 0029 exists
+  const migration0029Path = path.join(process.cwd(), "supabase/migrations/0029_security_hardening.sql");
+  assert(
+    fs.existsSync(migration0029Path),
+    "Security DB: Migration 0029 (security hardening) exists"
+  );
+
+  // 28.19: pgTAP test 017 exists
+  const test017Path = path.join(process.cwd(), "supabase/tests/017_security_hardening.test.sql");
+  assert(
+    fs.existsSync(test017Path),
+    "Security DB: pgTAP test 017 (security hardening) exists"
   );
 
   console.log("\n========================================================");

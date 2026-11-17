@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
+import { getSigningSecret } from "@/lib/security/secrets";
 
 export const TRACKING_SESSION_COOKIE_NAME = "cc_tracking_session";
 export const TRACKING_SESSION_MAX_AGE_SECONDS = 2 * 60 * 60; // 2 hours
@@ -9,17 +10,6 @@ export interface CustomCakeTrackingSessionPayload {
   verifiedRequestNumber: string;
   issuedAt: number;
   expiresAt: number;
-}
-
-/**
- * Derives a secure signing secret from environment configuration.
- */
-function getSigningSecret(): string {
-  const secret =
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    "namma-bakery-local-tracking-secret-key-fallback";
-  return secret;
 }
 
 /**
@@ -75,8 +65,7 @@ export function verifyTrackingSessionToken(token: string | null | undefined): Cu
     }
 
     return payload;
-  } catch (err) {
-    console.error("[tracking-session] Verification failed:", err);
+  } catch {
     return null;
   }
 }
@@ -116,7 +105,7 @@ export async function clearTrackingSessionCookie(): Promise<void> {
 }
 
 /**
- * Helper to mask a 10-digit phone number for customer display (e.g. "+91 ••••• •3215").
+ * Helper to mask a 10-digit phone number for customer display (e.g. "+91 •••••  •3215").
  */
 export function maskPhoneNumber(phone: string): string {
   if (!phone || phone.length < 4) return "+91 ••••• •••••";

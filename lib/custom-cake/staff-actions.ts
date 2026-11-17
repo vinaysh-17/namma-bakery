@@ -7,6 +7,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { notifyCustomRequestChanged, notifyStaffChanged } from "@/lib/realtime/broadcast";
 import type { CustomCakeStatus } from "./types";
 
+function rethrowIfRedirect(err: unknown) {
+  if (
+    err &&
+    typeof err === "object" &&
+    "digest" in err &&
+    typeof (err as { digest: unknown }).digest === "string" &&
+    (err as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  ) {
+    throw err;
+  }
+}
+
 /**
  * Updates a custom cake request status with staff authorization.
  */
@@ -15,13 +27,19 @@ export async function updateCustomCakeStatusAction(params: {
   toStatus: CustomCakeStatus;
   message?: string;
 }): Promise<{ success: boolean; error?: string }> {
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Unauthorized: Staff privileges required." };
+  }
+
   try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Unauthorized: Staff privileges required." };
-    }
 
     const { requestId, toStatus, message } = params;
+
+    if (message && message.length > 1000) {
+      return { success: false, error: "Message must be 1,000 characters or fewer." };
+    }
 
     // If using the database RPC transitions
     if (
@@ -91,6 +109,7 @@ export async function updateCustomCakeStatusAction(params: {
     await notifyCustomRequestChanged(requestId);
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[updateCustomCakeStatusAction] Execution failure:", err);
     return {
       success: false,
@@ -124,12 +143,13 @@ export async function acceptCustomCakeAsOrderAction(params: {
   confirmedPickupAt?: string | null;
   note?: string;
 }): Promise<{ success: boolean; error?: string; orderNumber?: string }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Unauthorized: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Unauthorized: Staff privileges required." };
+  }
 
+  try {
     const { requestId, pricePaise, confirmedPickupAt, note } = params;
     if (
       !Number.isInteger(pricePaise) ||
@@ -137,6 +157,9 @@ export async function acceptCustomCakeAsOrderAction(params: {
       pricePaise > 10_000_000
     ) {
       return { success: false, error: "Enter a valid agreed price." };
+    }
+    if (note && note.length > 1000) {
+      return { success: false, error: "Note must be 1,000 characters or fewer." };
     }
     const supabase = await createClient();
     const { data: request, error: fetchError } = await supabase
@@ -223,6 +246,7 @@ export async function acceptCustomCakeAsOrderAction(params: {
     const row = Array.isArray(accepted) ? accepted[0] : accepted;
     return { success: true, orderNumber: row?.order_number };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[acceptCustomCakeAsOrderAction] Execution failure:", err);
     return {
       success: false,
@@ -239,12 +263,13 @@ export async function addCustomCakeStaffNoteAction(params: {
   requestId: string;
   body: string;
 }): Promise<{ success: boolean; error?: string }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff || !session.user) {
-      return { success: false, error: "Unauthorized: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff || !session.user) {
+    return { success: false, error: "Unauthorized: Staff privileges required." };
+  }
 
+  try {
     const trimmed = params.body.trim();
     if (!trimmed || trimmed.length > 1000) {
       return {
@@ -269,6 +294,7 @@ export async function addCustomCakeStaffNoteAction(params: {
     await notifyStaffChanged();
     return { success: true };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[addCustomCakeStaffNoteAction] Execution failure:", err);
     return { success: false, error: "Failed to add note." };
   }
@@ -280,12 +306,13 @@ export async function addCustomCakeStaffNoteAction(params: {
 export async function getCustomCakeSignedUrlAction(
   storagePath: string
 ): Promise<{ success: boolean; signedUrl?: string; error?: string }> {
-  try {
-    const session = await requireStaffSession();
-    if (!session.isStaff) {
-      return { success: false, error: "Unauthorized: Staff privileges required." };
-    }
+  // Session validation outside try/catch so redirect(/staff/login) is never swallowed (#101)
+  const session = await requireStaffSession();
+  if (!session.isStaff) {
+    return { success: false, error: "Unauthorized: Staff privileges required." };
+  }
 
+  try {
     const validPath =
       typeof storagePath === "string" &&
       /^requests\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/.test(storagePath);
@@ -317,6 +344,7 @@ export async function getCustomCakeSignedUrlAction(
 
     return { success: true, signedUrl: data.signedUrl };
   } catch (err) {
+    rethrowIfRedirect(err);
     console.error("[getCustomCakeSignedUrlAction] Execution failure:", err);
     return { success: false, error: "Failed to retrieve image." };
   }

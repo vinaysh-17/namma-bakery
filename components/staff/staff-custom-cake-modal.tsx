@@ -257,6 +257,7 @@ function StaffCustomCakeModalContent({
                 <input
                   id="acceptNote"
                   type="text"
+                  maxLength={1000}
                   placeholder="e.g. Agreed on sugar paste figurines"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
@@ -303,6 +304,7 @@ function StaffCustomCakeModalContent({
                 <textarea
                   id="rejectReason"
                   required
+                  maxLength={1000}
                   rows={3}
                   placeholder="Explain why this custom cake request cannot be accommodated..."
                   value={note}

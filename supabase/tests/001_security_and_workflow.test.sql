@@ -50,7 +50,12 @@ select is((select count(*) from orders), 1::bigint, 'customer A sees only their 
 select is((select count(*) from order_internal_notes), 0::bigint, 'customer cannot read internal notes');
 reset role;
 set local role anon;
-select is((select count(*) from orders), 0::bigint, 'anonymous users see no orders');
+select throws_ok(
+  $$ select count(*) from orders $$,
+  '42501',
+  'permission denied for table orders',
+  'anonymous users cannot access orders (permission denied)'
+);
 reset role;
 
 -- 7-9: employee boundaries

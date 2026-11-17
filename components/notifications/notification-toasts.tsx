@@ -4,7 +4,7 @@ import React, { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ShoppingBag, Sparkles, X } from "lucide-react";
 import { useNotifications } from "./notifications-context";
-import { formatRelativeTime } from "@/lib/notifications/utils";
+import { formatRelativeTime, safeNotificationHref } from "@/lib/notifications/utils";
 import type { PortalNotification } from "@/lib/notifications/types";
 
 function ToastItem({
@@ -92,8 +92,9 @@ export function NotificationToastContainer() {
   const handleToastClick = async (notif: PortalNotification) => {
     await markAsRead(notif.id);
     dismissToast(notif.id);
-    if (notif.link_url) {
-      router.push(notif.link_url);
+    const href = safeNotificationHref(notif.link_url);
+    if (href) {
+      router.push(href);
     }
   };
 
@@ -113,4 +114,3 @@ export function NotificationToastContainer() {
     </div>
   );
 }
-

@@ -11,7 +11,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { useNotifications } from "./notifications-context";
-import { formatRelativeTime } from "@/lib/notifications/utils";
+import { formatRelativeTime, safeNotificationHref } from "@/lib/notifications/utils";
 import type { PortalNotification } from "@/lib/notifications/types";
 
 interface NotificationCenterProps {
@@ -75,8 +75,9 @@ export function NotificationCenter({ triggerRef }: NotificationCenterProps = {})
       await markAsRead(notif.id);
     }
     setIsOpen(false);
-    if (notif.link_url) {
-      router.push(notif.link_url);
+    const href = safeNotificationHref(notif.link_url);
+    if (href) {
+      router.push(href);
     }
   };
 
@@ -211,4 +212,3 @@ export function NotificationCenter({ triggerRef }: NotificationCenterProps = {})
     </div>
   );
 }
-
