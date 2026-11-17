@@ -6,17 +6,35 @@ import { CustomCakeConfirmation } from "@/components/custom-cake/custom-cake-con
 
 export const instant = false;
 
-export const metadata: Metadata = {
-  title: "Custom Cake Enquiry Confirmation",
-  description: "Your custom celebration cake enquiry confirmation and details.",
-  robots: {
-    index: false,
-    follow: false,
-  },
-};
-
 interface ConfirmationPageProps {
   params: Promise<{ token: string }>;
+}
+
+export async function generateMetadata({
+  params,
+}: ConfirmationPageProps): Promise<Metadata> {
+  const { token } = await params;
+  const result = await getCustomCakePublicViewAction(token);
+
+  if (!result.success || !result.data) {
+    return {
+      title: "Enquiry Not Found",
+      description: "Custom cake enquiry not found or invalid link.",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  return {
+    title: "Custom Cake Enquiry Confirmation",
+    description: "Your custom celebration cake enquiry confirmation and details.",
+    robots: {
+      index: false,
+      follow: false,
+    },
+  };
 }
 
 export default async function CustomCakeConfirmationPage({
@@ -40,8 +58,10 @@ export default async function CustomCakeConfirmationPage({
           {isNotFound ? "Enquiry Not Found" : "Unable to Load Enquiry"}
         </h1>
         <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-          {result.error ||
-            "We could not find a custom cake enquiry matching this confirmation link. Please verify the URL."}
+          {isNotFound
+            ? "We could not find a custom cake enquiry matching this confirmation link. Please verify the URL or submit a new enquiry."
+            : result.error ||
+              "We could not find a custom cake enquiry matching this confirmation link. Please verify the URL."}
         </p>
         <div className="pt-2">
           <Link

@@ -73,7 +73,11 @@ export function Footer() {
         </div>
 
         {/* Lower Right: Back to Top */}
-        <div className={`${isStaffLogin ? "mt-2 sm:mt-1" : "mt-4 sm:mt-2"} flex justify-end`}>
+        <div
+          className={`${isStaffLogin ? "mt-2 sm:mt-1" : "mt-4 sm:mt-2"} flex justify-end ${
+            isReady ? "staff-portal-transition" : ""
+          } ${isWidgetVisible ? "staff-portal-offset-active" : ""}`}
+        >
           <button
             type="button"
             onClick={scrollToTop}

@@ -1,5 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Coffee } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Page Not Found",
+  description: "The bakery category or page you are looking for doesn't exist or may have moved.",
+};
 
 export default function NotFound() {
   return (

@@ -29,6 +29,8 @@ import { cn } from "@/lib/utils";
 
 interface ProductCardProps {
   product: Product;
+  preload?: boolean;
+  priority?: boolean;
 }
 
 function renderPlaceholderIcon(kind: string, categorySlug?: string) {
@@ -52,7 +54,16 @@ export function isCakeProduct(product: Product, categorySlug?: string): boolean 
  * Cake Product Card
  * Opens product detail page for custom cake configuration (weight, egg preference, finish, tier rules).
  */
-function CakeProductCard({ product }: { product: Product }) {
+function CakeProductCard({
+  product,
+  preload,
+  priority,
+}: {
+  product: Product;
+  preload?: boolean;
+  priority?: boolean;
+}) {
+  const shouldPreload = Boolean(preload ?? priority);
   const categorySlug = product.category?.slug ?? "cakes";
   const formattedPrice =
     typeof product.startingPricePaise === "number" &&
@@ -76,6 +87,7 @@ function CakeProductCard({ product }: { product: Product }) {
               src={imageUrl}
               alt={imageAlt}
               fill
+              preload={shouldPreload || undefined}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
               className="object-cover object-center transition-transform duration-500 ease-out sm:group-hover:scale-[1.025]"
             />
@@ -143,7 +155,16 @@ function CakeProductCard({ product }: { product: Product }) {
  * Normal Food Product Card (Sandwiches, Mini Pizzas, Soups, etc.)
  * Provides direct variant selection, explicit quantity increment/decrement, and Add to Cart from the listing.
  */
-function SimpleProductCard({ product }: { product: Product }) {
+function SimpleProductCard({
+  product,
+  preload,
+  priority,
+}: {
+  product: Product;
+  preload?: boolean;
+  priority?: boolean;
+}) {
+  const shouldPreload = Boolean(preload ?? priority);
   const { addItem } = useCart();
   const router = useRouter();
   const categorySlug = product.category?.slug ?? "menu";
@@ -279,6 +300,7 @@ function SimpleProductCard({ product }: { product: Product }) {
               src={imageUrl}
               alt={imageAlt}
               fill
+              preload={shouldPreload || undefined}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
               className="object-cover object-center transition-transform duration-500 ease-out sm:group-hover:scale-[1.025]"
             />
@@ -323,7 +345,7 @@ function SimpleProductCard({ product }: { product: Product }) {
           {/* Product Name (English only) */}
           <Link
             href={`/menu/${categorySlug}/${product.slug}`}
-            className="font-heading text-sm sm:text-base font-semibold text-foreground transition-colors hover:text-caramel line-clamp-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+            className="font-heading text-sm sm:text-base font-semibold text-foreground transition-colors hover:text-caramel line-clamp-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel min-h-[32px] sm:min-h-[28px] inline-flex items-center"
           >
             {product.name}
           </Link>
@@ -355,7 +377,7 @@ function SimpleProductCard({ product }: { product: Product }) {
             {((availableVariants.length >= 2 && availableVariants.length <= 3) ||
               (selectionInvalid && availableVariants.length === 1)) && (
               <div
-                className="flex items-center gap-1"
+                className="flex items-center gap-1.5 flex-wrap"
                 role="group"
                 aria-label="Portion size options"
               >
@@ -373,7 +395,7 @@ function SimpleProductCard({ product }: { product: Product }) {
                       }}
                       aria-pressed={isSelected}
                       className={cn(
-                        "rounded-xs px-2 py-0.5 text-[11px] sm:text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel",
+                        "rounded-xs min-h-[32px] sm:min-h-[28px] px-2.5 py-1 text-xs font-medium inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel",
                         isSelected
                           ? "bg-caramel text-white font-semibold shadow-xs"
                           : "border border-border bg-secondary/40 text-foreground hover:bg-secondary"
@@ -396,7 +418,7 @@ function SimpleProductCard({ product }: { product: Product }) {
                   setSelectedVariantId(e.target.value);
                 }}
                 aria-label="Select variant"
-                className="h-7 rounded-xs border border-border bg-card px-2 text-[11px] sm:text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
+                className="h-8 sm:h-7 rounded-xs border border-border bg-card px-2 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-caramel"
               >
                 {!activeVariant && (
                   <option value="" disabled>
@@ -527,8 +549,12 @@ function SimpleProductCard({ product }: { product: Product }) {
                 ? orderBlockedLabel
                 : isCheckingAdd
                 ? `Checking that ${product.name} is still available`
+                : justAdded
+                ? `Added ${quantity} of ${product.name} to cart`
                 : canAddToCart
-                ? `Add ${quantity} of ${product.name} to cart`
+                ? `Add to Cart: ${quantity} of ${product.name}`
+                : selectionInvalid
+                ? `Choose option for ${product.name}`
                 : `Select a quantity for ${product.name} first`
             }
             className={cn(
@@ -566,13 +592,13 @@ function SimpleProductCard({ product }: { product: Product }) {
   );
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, preload, priority }: ProductCardProps) {
   const categorySlug = product.category?.slug;
   const isCake = isCakeProduct(product, categorySlug);
 
   if (isCake) {
-    return <CakeProductCard product={product} />;
+    return <CakeProductCard product={product} preload={preload} priority={priority} />;
   }
 
-  return <SimpleProductCard product={product} />;
+  return <SimpleProductCard product={product} preload={preload} priority={priority} />;
 }

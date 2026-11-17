@@ -381,9 +381,13 @@ export function CakeConfigurator({
           disabled={!canAddToCart}
           onClick={handleAddToCart}
           aria-label={
-            currentRule && totalPricePaise !== null
-              ? `Add ${quantity} of ${product.name} (${formatWeightGrams(selectedWeight)}, ${formatEggType(selectedEggType)}, ${formatCakeFinish(selectedFinish)}) to cart for ${formatPaise(totalPricePaise)}`
-              : "Select configuration to add to cart"
+            !product.is_available
+              ? `Currently Unavailable - ${product.name}`
+              : !product.orderable_online
+              ? `Available In-Store Only - ${product.name}`
+              : !currentRule || totalPricePaise === null
+              ? `Select Configuration for ${product.name} to add to cart`
+              : `Add to Cart • ${formatPaise(totalPricePaise ?? currentRule.price_paise)}: ${quantity} of ${product.name} (${formatWeightGrams(selectedWeight)}, ${formatEggType(selectedEggType)}, ${formatCakeFinish(selectedFinish)})`
           }
           className={`flex h-12 w-full items-center justify-center gap-2 rounded-sm px-6 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
             canAddToCart

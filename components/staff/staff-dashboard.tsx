@@ -437,6 +437,9 @@ export function StaffDashboard({
   const handleSelectOrder = (order: StaffOrder) => {
     setSelectedOrderId(order.id);
     clearUrlSelection();
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   const handleCloseOrder = () => {
@@ -468,6 +471,9 @@ export function StaffDashboard({
     setSelectedCustomCakeId(req ? req.id : null);
     setPhotoFocus(null);
     clearUrlSelection();
+    if (req && typeof window !== "undefined" && window.innerWidth < 1024) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   // "Photo Attached" badge: same selection as clicking the card, plus a photo-focus signal
@@ -476,6 +482,9 @@ export function StaffDashboard({
     // Date.now() is unique per click, so a repeat click on the same request still fires
     setPhotoFocus({ id: req.id, nonce: Date.now() });
     clearUrlSelection();
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   const handleCustomCakeDateChange = (date: string) => {

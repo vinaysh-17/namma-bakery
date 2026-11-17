@@ -5,7 +5,7 @@ import { CustomCakeTrackingDashboard } from "@/components/custom-cake/custom-cak
 export const instant = false;
 
 export const metadata: Metadata = {
-  title: "Track My Custom Cakes | Namma Bakery",
+  title: "Track My Custom Cakes",
   description:
     "Check real-time status, baker review notes, and specifications for all your custom celebration cake enquiries in one place.",
   robots: {

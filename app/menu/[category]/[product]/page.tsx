@@ -76,19 +76,19 @@ export default async function ProductDetailPage({
   const leadTimeText = formatLeadTime(product.lead_time_minutes);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+    <div className="mx-auto max-w-6xl px-4 py-8 pb-24 sm:px-6 sm:py-12 sm:pb-16">
       {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="mb-6 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         <Link
           href="/"
-          className="transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+          className="inline-flex min-h-[32px] sm:min-h-[28px] items-center px-1.5 py-1 -my-1 rounded-xs transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
         >
           Home
         </Link>
         <span>/</span>
         <Link
           href="/menu"
-          className="transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+          className="inline-flex min-h-[32px] sm:min-h-[28px] items-center px-1.5 py-1 -my-1 rounded-xs transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
         >
           Menu
         </Link>
@@ -97,7 +97,7 @@ export default async function ProductDetailPage({
           <>
             <Link
               href={`/menu/${category.slug}`}
-              className="transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+              className="inline-flex min-h-[32px] sm:min-h-[28px] items-center px-1.5 py-1 -my-1 rounded-xs transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
             >
               {category.name}
             </Link>

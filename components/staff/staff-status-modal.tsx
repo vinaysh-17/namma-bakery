@@ -239,10 +239,11 @@ function StaffStatusModalContent({
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-cocoa/40 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-cocoa/40 backdrop-blur-xs"
     >
-      <div className="w-full max-w-lg rounded-sm border border-border bg-card p-6 shadow-md space-y-5 animate-in fade-in-50 zoom-in-95 duration-150">
-        <div className="flex items-start justify-between">
+      <div className="w-full max-w-lg max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col rounded-sm border border-border bg-card shadow-md animate-in fade-in-50 zoom-in-95 duration-150 overflow-hidden">
+        {/* Modal Header (Pinned) */}
+        <div className="flex items-start justify-between p-4 sm:p-6 pb-3 sm:pb-4 border-b border-border/50 shrink-0">
           <div className="space-y-1">
             <h2 id="modal-title" className="font-heading text-lg font-bold text-foreground">
               {getTitle()}
@@ -261,18 +262,20 @@ function StaffStatusModalContent({
           </button>
         </div>
 
-        {errorMessage && (
-          <div
-            role="alert"
-            className="flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"
-          >
-            <AlertCircle className="size-4 shrink-0 mt-0.5" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden min-h-0">
+          {/* Scrollable Form Body */}
+          <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
+            {errorMessage && (
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"
+              >
+                <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* ACCEPT: estimated ready time */}
+            {/* ACCEPT: estimated ready time */}
           {type === "ACCEPT" && (
             <div className="space-y-3">
               <div className="rounded-sm border border-border bg-background p-3 text-xs space-y-1">
@@ -311,6 +314,7 @@ function StaffStatusModalContent({
                 <input
                   id="acceptNote"
                   type="text"
+                  maxLength={1000}
                   placeholder="e.g. Sponge cooling, will ice by 3 PM"
                   value={reasonNote}
                   onChange={(e) => setReasonNote(e.target.value)}
@@ -361,6 +365,7 @@ function StaffStatusModalContent({
                 <input
                   id="handoverNote"
                   type="text"
+                  maxLength={1000}
                   placeholder="e.g. Picked up by customer at bakery counter"
                   value={reasonNote}
                   onChange={(e) => setReasonNote(e.target.value)}
@@ -406,6 +411,7 @@ function StaffStatusModalContent({
                 <textarea
                   id="reasonNote"
                   required
+                  maxLength={1000}
                   rows={3}
                   placeholder="Explain why this order is being rejected or cancelled..."
                   value={reasonNote}
@@ -467,6 +473,7 @@ function StaffStatusModalContent({
                 <input
                   id="memoNote"
                   type="text"
+                  maxLength={1000}
                   placeholder="Optional note for order history"
                   value={reasonNote}
                   onChange={(e) => setReasonNote(e.target.value)}
@@ -476,13 +483,15 @@ function StaffStatusModalContent({
             </div>
           )}
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">
+          </div>
+
+          {/* Action Buttons (Pinned Footer) */}
+          <div className="flex items-center justify-end gap-2 p-4 sm:p-5 border-t border-border/60 bg-card shrink-0">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="h-10 px-4 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted"
+              className="h-10 px-4 rounded-sm border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
             >
               Cancel
             </button>

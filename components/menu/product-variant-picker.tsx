@@ -209,13 +209,17 @@ export function ProductVariantPicker({
           disabled={!canAddToCart}
           onClick={handleAddToCart}
           aria-label={
-            selectionInvalid
-              ? `Choose an option for ${product.name} before adding it to the cart`
+            !product.is_available || purchaseState === "VARIANTS_UNAVAILABLE"
+              ? `Currently Unavailable - ${product.name}`
+              : !product.orderable_online
+              ? `Available In-Store Only - ${product.name}`
+              : selectionInvalid
+              ? `Select a size to continue adding ${product.name} to cart`
               : totalPricePaise !== null
-              ? `Add ${quantity} of ${product.name}${
+              ? `Add to Cart • ${formatPaise(totalPricePaise)}: ${quantity} of ${product.name}${
                   activeVariant ? ` (${activeVariant.label})` : ""
-                } to cart for ${formatPaise(totalPricePaise)}`
-              : "Product cannot be added to cart"
+                }`
+              : "Unavailable"
           }
           className={`flex h-12 w-full items-center justify-center gap-2 rounded-sm px-6 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
             canAddToCart
