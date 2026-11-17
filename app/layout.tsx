@@ -32,12 +32,14 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+import { Suspense } from "react";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { RecommendationWidget } from "@/components/layout/recommendation-widget";
 import { CartProvider } from "@/lib/cart/context";
 import { getBaseUrl } from "@/lib/utils/seo";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 const siteUrl = getBaseUrl();
 
@@ -102,6 +104,16 @@ export const metadata: Metadata = {
   },
 };
 
+async function AsyncHeader() {
+  const hours = await getBusinessHoursData();
+  return <Header hoursLabel={hours?.summaryLabel ?? null} />;
+}
+
+async function AsyncFooter() {
+  const hours = await getBusinessHoursData();
+  return <Footer hoursLabel={hours?.summaryLabel ?? null} />;
+}
+
 export default function RootLayout({
   children,
 }: {
@@ -121,11 +133,15 @@ export default function RootLayout({
         </a>
         <CartProvider>
           <DemoBanner />
-          <Header />
+          <Suspense fallback={<Header />}>
+            <AsyncHeader />
+          </Suspense>
           <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
             {children}
           </main>
-          <Footer />
+          <Suspense fallback={<Footer />}>
+            <AsyncFooter />
+          </Suspense>
           <RecommendationWidget />
         </CartProvider>
       </body>

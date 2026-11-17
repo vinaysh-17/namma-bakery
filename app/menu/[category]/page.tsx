@@ -12,6 +12,7 @@ import { CategoryNav } from "@/components/menu/category-nav";
 import { ProductGrid } from "@/components/menu/product-grid";
 import { MenuEmptyState } from "@/components/menu/menu-empty-state";
 import { MenuErrorState } from "@/components/menu/menu-error-state";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 export const instant = false;
 
@@ -55,15 +56,17 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
   await connection();
   const { category: slug } = await params;
 
-  const [categoryResult, categoriesResult] = await Promise.all([
+  const [categoryResult, categoriesResult, hours] = await Promise.all([
     getCategoryBySlug(slug),
     getMenuCategories(),
+    getBusinessHoursData(),
   ]);
+  const hoursLabel = hours?.summaryLabel ?? null;
 
   if (categoryResult.error) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <MenuErrorState message="Could not load this category right now." />
+        <MenuErrorState message="Could not load this category right now." hoursLabel={hoursLabel} />
       </div>
     );
   }
@@ -83,7 +86,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
   if (productsError) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <MenuErrorState message="Could not load items for this category." />
+        <MenuErrorState message="Could not load items for this category." hoursLabel={hoursLabel} />
       </div>
     );
   }

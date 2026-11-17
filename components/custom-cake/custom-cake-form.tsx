@@ -29,6 +29,8 @@ import {
 import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
 import { OrderingPausedBanner } from "@/components/store/ordering-paused-banner";
 import { cn } from "@/lib/utils";
+import { generatePickupWindows } from "@/lib/hours/utils";
+import type { BusinessHoursEntry } from "@/lib/hours/types";
 
 const CAKE_OCCASIONS = [
   "Birthday Celebration",
@@ -70,16 +72,12 @@ const SHAPE_OPTIONS = [
   "Custom Sculpted",
 ];
 
-const PICKUP_WINDOWS = [
-  "10:00 AM – 12:00 PM",
-  "12:00 PM – 2:00 PM",
-  "2:00 PM – 4:00 PM",
-  "4:00 PM – 6:00 PM",
-  "6:00 PM – 8:00 PM",
-  "8:00 PM – 9:30 PM",
-];
 
-export function CustomCakeForm() {
+export function CustomCakeForm({
+  businessHoursEntries,
+}: {
+  businessHoursEntries?: BusinessHoursEntry[] | null;
+}) {
   const router = useRouter();
 
   // Tomorrow in IST as minimum pickup date. The submit check works it out again, so a
@@ -104,7 +102,20 @@ export function CustomCakeForm() {
 
   const [shape, setShape] = React.useState(SHAPE_OPTIONS[0]);
   const [preferredPickupDate, setPreferredPickupDate] = React.useState(tomorrowIst);
-  const [preferredPickupTime, setPreferredPickupTime] = React.useState(PICKUP_WINDOWS[2]);
+
+  const pickupWindows = React.useMemo(() => {
+    if (!businessHoursEntries || businessHoursEntries.length === 0) return [];
+    const weekday = new Date(`${preferredPickupDate}T00:00:00Z`).getUTCDay();
+    return generatePickupWindows(businessHoursEntries, weekday);
+  }, [businessHoursEntries, preferredPickupDate]);
+
+  const [preferredPickupTime, setPreferredPickupTime] = React.useState(
+    () => pickupWindows[Math.min(2, pickupWindows.length - 1)] ?? ""
+  );
+
+  const validPickupTime = pickupWindows.includes(preferredPickupTime)
+    ? preferredPickupTime
+    : pickupWindows[Math.min(2, pickupWindows.length - 1)] ?? "";
 
   const [description, setDescription] = React.useState("");
   const [messageOnCake, setMessageOnCake] = React.useState("");
@@ -201,7 +212,7 @@ export function CustomCakeForm() {
     setCustomWeightInput("");
     setShape(SHAPE_OPTIONS[0]);
     setPreferredPickupDate(tomorrowIst);
-    setPreferredPickupTime(PICKUP_WINDOWS[2]);
+    setPreferredPickupTime(pickupWindows[Math.min(2, pickupWindows.length - 1)] ?? "");
     setDescription("");
     setMessageOnCake("");
     setAdditionalNotes("");
@@ -213,7 +224,7 @@ export function CustomCakeForm() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-  }, [tomorrowIst, previewUrl]);
+  }, [tomorrowIst, previewUrl, pickupWindows]);
 
   // Prevent browser window from navigating away when a file is dropped outside the dropzone
   React.useEffect(() => {
@@ -438,7 +449,7 @@ export function CustomCakeForm() {
       formData.set("weightGrams", String(finalWeight));
       formData.set("shape", shape);
       formData.set("preferredPickupDate", preferredPickupDate);
-      formData.set("preferredPickupTime", preferredPickupTime);
+      formData.set("preferredPickupTime", validPickupTime);
       formData.set("description", description.trim());
       if (messageOnCake.trim()) formData.set("messageOnCake", messageOnCake.trim());
       if (additionalNotes.trim()) formData.set("additionalNotes", additionalNotes.trim());
@@ -1100,15 +1111,19 @@ export function CustomCakeForm() {
               <select
                 id="preferredPickupTime"
                 required
-                value={preferredPickupTime}
+                value={validPickupTime}
                 onChange={(e) => setPreferredPickupTime(e.target.value)}
                 className="w-full min-h-[48px] rounded-sm border border-border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
               >
-                {PICKUP_WINDOWS.map((win) => (
-                  <option key={win} value={win}>
-                    {win}
-                  </option>
-                ))}
+                {pickupWindows.length === 0 ? (
+                  <option value="" disabled>Pickup hours unavailable</option>
+                ) : (
+                  pickupWindows.map((win) => (
+                    <option key={win} value={win}>
+                      {win}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
             <p className="text-[11px] text-muted-foreground">

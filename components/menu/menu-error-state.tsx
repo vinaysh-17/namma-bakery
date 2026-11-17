@@ -3,10 +3,12 @@ import { AlertCircle, Clock, MapPin } from "lucide-react";
 
 interface MenuErrorStateProps {
   message?: string;
+  hoursLabel?: string | null;
 }
 
 export function MenuErrorState({
   message = "We are currently having trouble reaching our bakery menu system.",
+  hoursLabel,
 }: MenuErrorStateProps) {
   return (
     <div className="flex flex-col items-center justify-center rounded-sm border border-border bg-card p-8 text-center sm:p-12">
@@ -29,7 +31,7 @@ export function MenuErrorState({
         </div>
         <div className="flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5 text-caramel" />
-          <span>Open Daily 10:00 AM – 9:30 PM</span>
+          <span>{hoursLabel ? `Open: ${hoursLabel}` : "Hours unavailable"}</span>
         </div>
       </div>
 

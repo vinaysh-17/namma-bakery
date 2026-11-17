@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Clock, MapPin, Store, ArrowUpRight, Search } from "lucide-react";
 import { ScrollReveal } from "@/components/ui/scroll-reveal";
 
-export function StoreInfo() {
+export function StoreInfo({ hoursLabel }: { hoursLabel?: string | null }) {
   const mapsUrl = "https://www.google.com/maps/search/?api=1&query=Namma+Bakery+BEML+Layout+3rd+Stage+Rajarajeshwari+Nagar+Bengaluru";
 
   return (
@@ -44,7 +44,7 @@ export function StoreInfo() {
                         Bakery Timings
                       </h3>
                       <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
-                        Open Daily: 10:00 AM – 9:30 PM (All 7 Days)
+                        {hoursLabel ? `Open: ${hoursLabel}` : "Hours unavailable"}
                       </p>
                     </div>
                   </div>

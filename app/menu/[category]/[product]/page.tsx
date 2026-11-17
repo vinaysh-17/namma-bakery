@@ -10,6 +10,7 @@ import { ProductOrderStatus } from "@/components/menu/product-order-status";
 import { CakeConfigurator } from "@/components/menu/cake-configurator";
 import { ProductVariantPicker } from "@/components/menu/product-variant-picker";
 import { MenuErrorState } from "@/components/menu/menu-error-state";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 export const instant = false;
 
@@ -54,15 +55,17 @@ export default async function ProductDetailPage({
 }: ProductDetailPageProps) {
   const { category: categorySlug, product: productSlug } = await params;
 
-  const { data: product, error } = await getProductBySlug(
-    categorySlug,
-    productSlug
-  );
+  const [productResult, hours] = await Promise.all([
+    getProductBySlug(categorySlug, productSlug),
+    getBusinessHoursData(),
+  ]);
+  const { data: product, error } = productResult;
+  const hoursLabel = hours?.summaryLabel ?? null;
 
   if (error) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-        <MenuErrorState message="Could not load product details right now." />
+        <MenuErrorState message="Could not load product details right now." hoursLabel={hoursLabel} />
       </div>
     );
   }
@@ -131,7 +134,7 @@ export default async function ProductDetailPage({
             </p>
             <div className="mt-3 flex items-center gap-1.5 border-t border-border/50 pt-2 text-[11px]">
               <Clock className="h-3.5 w-3.5 text-caramel" />
-              <span>Counter Hours: 10:00 AM – 9:30 PM (Daily)</span>
+              <span>{hoursLabel ? `Counter Hours: ${hoursLabel}` : "Counter hours unavailable"}</span>
             </div>
           </div>
         </div>

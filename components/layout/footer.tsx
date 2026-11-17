@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { Clock, MapPin, ArrowUp } from "lucide-react";
 import { useRecommendationWidgetVisible } from "@/lib/recommendation-store";
 
-export function Footer() {
+export function Footer({ hoursLabel }: { hoursLabel?: string | null }) {
   const isWidgetVisible = useRecommendationWidgetVisible();
   const [isReady, setIsReady] = useState(false);
   const pathname = usePathname();
@@ -66,7 +66,7 @@ export function Footer() {
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-caramel" />
-                <span>Open Daily: 10:00 AM – 9:30 PM</span>
+                <span>{hoursLabel ? `Open: ${hoursLabel}` : "Hours unavailable"}</span>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { CartView } from "@/components/cart/cart-view";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 export const instant = false;
 
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function CartPage() {
-  return <CartView />;
+export default async function CartPage() {
+  const hours = await getBusinessHoursData();
+  return <CartView hoursLabel={hours?.summaryLabel ?? null} />;
 }

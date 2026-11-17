@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { CheckoutForm } from "@/components/checkout/checkout-form";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 export const instant = false;
 
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function CheckoutPage() {
-  return <CheckoutForm />;
+export default async function CheckoutPage() {
+  const hours = await getBusinessHoursData();
+  return <CheckoutForm hoursLabel={hours?.summaryLabel ?? null} />;
 }

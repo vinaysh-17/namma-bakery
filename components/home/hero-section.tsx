@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Clock, MapPin, Sparkles } from "lucide-react";
 import { HeroImageFrame } from "./hero-image-frame";
 
-export function HeroSection() {
+export function HeroSection({ hoursLabel }: { hoursLabel?: string | null }) {
   return (
     <section className="relative border-b border-border bg-card/25 py-12 sm:py-16 lg:py-20 overflow-hidden">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -49,7 +49,7 @@ export function HeroSection() {
             <div className="animate-hero-meta pt-3 border-t border-border/70 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5 text-caramel shrink-0" />
-                <span>Open Daily: 10:00 AM – 9:30 PM</span>
+                <span>{hoursLabel ? `Open: ${hoursLabel}` : "Hours unavailable"}</span>
               </span>
               <span className="hidden sm:inline text-border">•</span>
               <span className="inline-flex items-center gap-1.5">

@@ -14,7 +14,7 @@ import { PickupSelector } from "@/components/pickup/pickup-selector";
 import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
 import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
 
-export function CartView() {
+export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
   const {
     items,
     itemCount,
@@ -234,7 +234,7 @@ export function CartView() {
 
           {/* Pickup Slot Scheduling Section */}
           <div id="pickup-selector-section">
-            <PickupSelector />
+            <PickupSelector hoursLabel={hoursLabel} />
           </div>
 
           <div>

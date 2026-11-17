@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getMenuCategories, getMenuProducts } from "@/lib/menu/queries";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 import { CategoryNav } from "@/components/menu/category-nav";
 import { ProductGrid } from "@/components/menu/product-grid";
 import { MenuEmptyState } from "@/components/menu/menu-empty-state";
@@ -24,15 +25,16 @@ export const metadata: Metadata = {
 };
 
 export default async function MenuPage() {
-  const [categoriesResult, productsResult] = await Promise.all([
+  const [categoriesResult, productsResult, hours] = await Promise.all([
     getMenuCategories(),
     getMenuProducts(),
+    getBusinessHoursData(),
   ]);
 
   if (categoriesResult.error || productsResult.error) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <MenuErrorState />
+        <MenuErrorState hoursLabel={hours?.summaryLabel ?? null} />
       </div>
     );
   }

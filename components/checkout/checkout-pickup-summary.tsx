@@ -7,11 +7,13 @@ import { formatPickupSelectionSummary } from "@/lib/pickup/utils";
 interface CheckoutPickupSummaryProps {
   pickupDate: string | null;
   pickupSlot: PickupSlot | null;
+  hoursLabel?: string | null;
 }
 
 export function CheckoutPickupSummary({
   pickupDate,
   pickupSlot,
+  hoursLabel,
 }: CheckoutPickupSummaryProps) {
   const isPickupValid = Boolean(pickupDate && pickupSlot);
 
@@ -84,7 +86,7 @@ export function CheckoutPickupSummary({
                 Namma Bakery Kitchen &amp; Counter
               </span>
               <span className="text-[11px] leading-relaxed">
-                BEML Layout 3rd Stage, Rajarajeshwari Nagar, Bengaluru (Counter Hours: 10:00 AM – 9:30 PM Daily)
+                BEML Layout 3rd Stage, Rajarajeshwari Nagar, Bengaluru{hoursLabel ? ` (Counter Hours: ${hoursLabel})` : ""}
               </span>
             </div>
           </div>

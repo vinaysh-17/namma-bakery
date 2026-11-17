@@ -13,7 +13,7 @@ import { PickupDatePicker } from "./pickup-date-picker";
 import { PickupSlotPicker } from "./pickup-slot-picker";
 import { PickupSlotNotice } from "./pickup-slot-notice";
 
-export function PickupSelector() {
+export function PickupSelector({ hoursLabel }: { hoursLabel?: string | null } = {}) {
   const {
     items,
     pickupDate,
@@ -135,7 +135,7 @@ export function PickupSelector() {
           </span>
           <span className="flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-caramel shrink-0" />
-            <span>Counter Hours: 10:00 AM – 9:30 PM (Daily)</span>
+            <span>{hoursLabel ? `Counter Hours: ${hoursLabel}` : "Counter Pickup"}</span>
           </span>
         </div>
 

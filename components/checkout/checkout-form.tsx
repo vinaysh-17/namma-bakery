@@ -46,7 +46,7 @@ const CART_CHANGED_CODES = new Set([
   "OPTION_NOT_AVAILABLE",
 ]);
 
-export function CheckoutForm() {
+export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
   const router = useRouter();
   // The idempotency key of the current checkout attempt. It is reused when the SAME order is
   // submitted again after an unknown outcome (lost response), and replaced as soon as the
@@ -414,6 +414,7 @@ export function CheckoutForm() {
             <CheckoutPickupSummary
               pickupDate={pickupDate}
               pickupSlot={pickupSlot}
+              hoursLabel={hoursLabel}
             />
 
             {/* Payment Method Notice */}

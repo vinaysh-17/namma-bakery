@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { getMenuProducts } from "@/lib/menu/queries";
 import { getBakeryJsonLd } from "@/lib/utils/seo";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 import { HeroSection } from "@/components/home/hero-section";
 import { PopularCakes } from "@/components/home/popular-cakes";
 import { CustomCakeFeature } from "@/components/home/custom-cake-feature";
@@ -20,9 +21,13 @@ export const metadata: Metadata = {
 
 export default async function HomePage() {
   await connection();
-  const productsResult = await getMenuProducts();
+  const [productsResult, hours] = await Promise.all([
+    getMenuProducts(),
+    getBusinessHoursData(),
+  ]);
   const products = productsResult.data ?? [];
-  const jsonLd = getBakeryJsonLd();
+  const hoursLabel = hours?.summaryLabel ?? null;
+  const jsonLd = getBakeryJsonLd(hours);
 
   return (
     <div id="top" className="flex flex-col scroll-mt-20">
@@ -33,7 +38,7 @@ export default async function HomePage() {
       />
 
       {/* 1. Hero Section (Editorial Split with Real Storefront Image) */}
-      <HeroSection />
+      <HeroSection hoursLabel={hoursLabel} />
 
       {/* 2. Popular Cakes / Signature Products */}
       <PopularCakes products={products} />
@@ -42,7 +47,7 @@ export default async function HomePage() {
       <CustomCakeFeature />
 
       {/* 4. Visit Us / Store Information */}
-      <StoreInfo />
+      <StoreInfo hoursLabel={hoursLabel} />
     </div>
   );
 }

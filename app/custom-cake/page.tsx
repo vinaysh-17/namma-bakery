@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { CustomCakeHero } from "@/components/custom-cake/custom-cake-hero";
 import { CustomCakeForm } from "@/components/custom-cake/custom-cake-form";
+import { getBusinessHoursData } from "@/lib/hours/queries";
 
 export const instant = false;
 
@@ -20,7 +21,9 @@ export const metadata: Metadata = {
   },
 };
 
-export default function CustomCakePage() {
+export default async function CustomCakePage() {
+  const hours = await getBusinessHoursData();
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <CustomCakeHero />
@@ -31,7 +34,7 @@ export default function CustomCakePage() {
           </div>
         }
       >
-        <CustomCakeForm />
+        <CustomCakeForm businessHoursEntries={hours?.entries ?? null} />
       </Suspense>
     </div>
   );

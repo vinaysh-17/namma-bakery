@@ -55,7 +55,7 @@ const MOBILE_PRIMARY_ACTIONS = [
   { href: "/orders", label: "Track Order" },
 ];
 
-export function Header() {
+export function Header({ hoursLabel }: { hoursLabel?: string | null }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
@@ -400,7 +400,7 @@ export function Header() {
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <Clock className="h-3.5 w-3.5 text-caramel shrink-0" />
-                  <span>Counter Pickup: 10:00 AM – 9:30 PM (Daily)</span>
+                  <span>{hoursLabel ? `Counter Pickup: ${hoursLabel}` : "Counter Pickup"}</span>
                 </div>
               </div>
 
