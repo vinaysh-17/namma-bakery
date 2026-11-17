@@ -83,6 +83,7 @@ export interface OrderTrackDetails {
   estimated_ready_at: string | null;
   bakery_note: string | null;
   rejection_reason: string | null;
+  cancellation_reason: string | null;
   total_paise: number;
   payment_status: PaymentStatus;
   payment_method: PaymentMethod;

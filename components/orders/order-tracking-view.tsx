@@ -17,6 +17,7 @@ import {
   Check,
 } from "lucide-react";
 import type { OrderStatus, OrderTrackDetails } from "@/lib/orders/types";
+import { formatCustomerOrderStatus } from "@/lib/orders/status-labels";
 import { formatPaise } from "@/lib/utils/money";
 
 interface OrderTrackingViewProps {
@@ -87,10 +88,15 @@ export function OrderTrackingView({
     order.status === "CANCELLED" ||
     order.status === "NO_SHOW";
 
-  // Format pickup date and time in Asia/Kolkata
-  const pickupDateObj = new Date(order.requested_pickup_at);
+  // Best pickup time: staff-confirmed > estimated ready > customer-requested
+  const bestPickupIso =
+    order.confirmed_pickup_at ?? order.estimated_ready_at ?? order.requested_pickup_at;
+  const pickupWasAdjusted =
+    bestPickupIso !== order.requested_pickup_at;
+
+  const pickupDateObj = new Date(bestPickupIso);
   const formattedPickupDate = isNaN(pickupDateObj.getTime())
-    ? order.requested_pickup_at
+    ? bestPickupIso
     : pickupDateObj.toLocaleDateString("en-IN", {
         timeZone: "Asia/Kolkata",
         weekday: "short",
@@ -189,7 +195,7 @@ export function OrderTrackingView({
               }`}
             >
               <Clock className="h-3 w-3" />
-              {order.status.replace(/_/g, " ")}
+              {formatCustomerOrderStatus(order.status)}
             </span>
           </div>
         </div>
@@ -343,10 +349,16 @@ export function OrderTrackingView({
               <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
               <div>
                 <h4 className="font-semibold text-sm">
-                  Order {order.status === "CANCELLED" ? "Cancelled" : "Not Accepted"}
+                  {order.status === "CANCELLED"
+                    ? "Order Cancelled"
+                    : order.status === "NO_SHOW"
+                    ? "Not collected"
+                    : "Order Not Accepted"}
                 </h4>
                 <p className="text-xs mt-1 leading-relaxed text-destructive/90">
-                  {order.rejection_reason ||
+                  {(order.status === "CANCELLED"
+                    ? order.cancellation_reason
+                    : order.rejection_reason) ||
                     "This order has been updated. Please contact the bakery counter if you have any questions."}
                 </p>
               </div>
@@ -368,6 +380,11 @@ export function OrderTrackingView({
             {formattedPickupTime && (
               <p className="text-sm font-medium text-caramel">
                 Around {formattedPickupTime}
+              </p>
+            )}
+            {pickupWasAdjusted && (
+              <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                Updated by bakery
               </p>
             )}
             <p className="text-[11px] text-muted-foreground">
