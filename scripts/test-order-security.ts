@@ -36,6 +36,16 @@ import {
   weekdayForDateString,
 } from "../lib/pickup/queries";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import {
+  hasUnreadCustomCakes,
+  resolveDateRollover,
+  resolveInitialLastSeen,
+} from "../lib/staff/dashboard-state";
+import {
+  readLastSeen,
+  subscribeLastSeen,
+  writeLastSeen,
+} from "../lib/staff/last-seen-store";
 import { execSync } from "node:child_process";
 import {
   adminCategorySchema,
@@ -4048,6 +4058,333 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     adminActionsSrc.includes("special_closures_location_id_closure_date_key") &&
       adminActionsSrc.includes('[updateSpecialClosureAction] Error:'),
     "Targeted #L-3: Special closure actions map exact 23505 duplicate date constraint and sanitize error logging"
+  );
+
+  // --- 27. Batch 6 Part 1: Dashboard Reliability (#80, #100, #104) ---
+  console.log("\n--- 27. Batch 6 Part 1: Dashboard Reliability (#80, #100, #104) ---");
+
+  // 1. Issue #80: IST Date Calculation & Boundary Accuracy
+  const utcDateDuringIstEarlyMorning = new Date("2026-11-15T21:30:00.000Z"); // 03:00 AM IST on Nov 16
+  const istDateStr = getIstDateString(utcDateDuringIstEarlyMorning);
+  assert(
+    istDateStr === "2026-11-16",
+    "Staff #80: getIstDateString correctly produces 2026-11-16 for 03:00 AM IST when UTC is still Nov 15"
+  );
+
+  const utcDateDuringIstLateNight = new Date("2026-11-15T18:15:00.000Z"); // 11:45 PM IST on Nov 15
+  assert(
+    getIstDateString(utcDateDuringIstLateNight) === "2026-11-15",
+    "Staff #80: getIstDateString correctly produces 2026-11-15 for 11:45 PM IST"
+  );
+
+  // 2. Issue #80: IST rollover decision (real module: lib/staff/dashboard-state.ts)
+  type RolloverOrder = {
+    id: string;
+    confirmed_pickup_at: string | null;
+    requested_pickup_at: string;
+  };
+  const rolloverOrders: RolloverOrder[] = [
+    // Pickup 00:05 IST on 16 Nov (still 15 Nov in UTC)
+    { id: "order-new-day", confirmed_pickup_at: null, requested_pickup_at: "2026-11-15T18:35:00.000Z" },
+    // Requested for 15 Nov but confirmed for 16 Nov: confirmed time wins
+    { id: "order-confirmed-new-day", confirmed_pickup_at: "2026-11-16T05:00:00.000Z", requested_pickup_at: "2026-11-15T05:00:00.000Z" },
+    { id: "order-old-day", confirmed_pickup_at: null, requested_pickup_at: "2026-11-15T10:00:00.000Z" },
+  ];
+  const rolloverRequests = [
+    { id: "req-new-day", created_at: "2026-11-15T18:35:00.000Z" },
+    { id: "req-old-day", created_at: "2026-11-15T10:00:00.000Z" },
+  ];
+  const baseRollover = {
+    previousToday: "2026-11-15",
+    currentToday: "2026-11-16",
+    followingOrdersToday: true,
+    followingCustomCakesToday: true,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: rolloverOrders,
+    customCakeRequests: rolloverRequests,
+  };
+
+  assert(
+    resolveDateRollover({ ...baseRollover, previousToday: "2026-11-16" }) === null,
+    "Staff #80: No rollover result while the IST date is unchanged"
+  );
+
+  const followingResult = resolveDateRollover(baseRollover);
+  assert(
+    followingResult !== null &&
+      followingResult.todayIst === "2026-11-16" &&
+      followingResult.orders?.selectedDate === "2026-11-16" &&
+      followingResult.customCakes?.selectedDate === "2026-11-16" &&
+      followingResult.shouldRefresh === true &&
+      followingResult.shouldClearUrlSelection === false,
+    "Staff #80: Views following today advance to the new IST date and request a data refresh"
+  );
+
+  const pinnedResult = resolveDateRollover({
+    ...baseRollover,
+    followingOrdersToday: false,
+    followingCustomCakesToday: false,
+    selectedOrderId: "order-old-day",
+    selectedCustomCakeId: "req-old-day",
+  });
+  assert(
+    pinnedResult !== null &&
+      pinnedResult.todayIst === "2026-11-16" &&
+      pinnedResult.orders === null &&
+      pinnedResult.customCakes === null &&
+      pinnedResult.shouldRefresh === false &&
+      pinnedResult.shouldClearUrlSelection === false,
+    "Staff #80: Views pinned to an explicit date keep their date and selection, with no refresh"
+  );
+
+  const mixedResult = resolveDateRollover({
+    ...baseRollover,
+    followingCustomCakesToday: false,
+  });
+  assert(
+    mixedResult !== null && mixedResult.orders !== null && mixedResult.customCakes === null,
+    "Staff #80: Orders and custom cakes follow today independently"
+  );
+
+  const keepSelection = resolveDateRollover({
+    ...baseRollover,
+    selectedOrderId: "order-confirmed-new-day",
+    selectedCustomCakeId: "req-new-day",
+  });
+  assert(
+    keepSelection?.orders?.selectedOrderId === "order-confirmed-new-day" &&
+      keepSelection?.customCakes?.selectedId === "req-new-day" &&
+      keepSelection?.shouldClearUrlSelection === false,
+    "Staff #80: A selection that belongs to the new IST day (confirmed pickup / 00:05 IST) is kept"
+  );
+
+  const dropSelection = resolveDateRollover({
+    ...baseRollover,
+    selectedOrderId: "order-old-day",
+    selectedCustomCakeId: "req-old-day",
+  });
+  assert(
+    dropSelection?.orders?.selectedOrderId === null &&
+      dropSelection?.customCakes?.selectedId === null &&
+      dropSelection?.shouldClearUrlSelection === true,
+    "Staff #80: A selection from the previous day is dropped and the URL selection is cleared"
+  );
+
+  const dropMissing = resolveDateRollover({
+    ...baseRollover,
+    selectedOrderId: "order-that-no-longer-exists",
+  });
+  assert(
+    dropMissing?.orders?.selectedOrderId === null && dropMissing?.shouldClearUrlSelection === true,
+    "Staff #80: A selection whose record is gone is dropped on rollover"
+  );
+
+  // 3. Issue #80: wiring in StaffDashboard (guards against regressions the pure tests cannot see)
+  const staffDashboardSrc80 = fs.readFileSync(
+    path.join(process.cwd(), "components/staff/staff-dashboard.tsx"),
+    "utf8"
+  );
+
+  assert(
+    staffDashboardSrc80.includes("const [todayIst, setTodayIst] = React.useState<string>(() => getIstDateString());") &&
+      staffDashboardSrc80.includes("const [isFollowingToday, setIsFollowingToday] = React.useState<boolean>(true);") &&
+      staffDashboardSrc80.includes("const [isFollowingCustomCakeToday, setIsFollowingCustomCakeToday] = React.useState<boolean>(true);") &&
+      staffDashboardSrc80.includes("resolveDateRollover({"),
+    "Staff #80: StaffDashboard tracks todayIst and following-today state and delegates the decision to resolveDateRollover"
+  );
+
+  assert(
+    !staffDashboardSrc80.includes("setTodayIst((") &&
+      !staffDashboardSrc80.includes("setSelectedOrderId((prev") &&
+      !staffDashboardSrc80.includes("setSelectedCustomCakeId((prev"),
+    "Staff #80: Rollover never runs side effects inside state updater functions"
+  );
+
+  assert(
+    staffDashboardSrc80.includes("window.setInterval(checkDateRollover, 60000)") &&
+      staffDashboardSrc80.includes('document.addEventListener("visibilitychange", handleVisibilityOrFocus)') &&
+      staffDashboardSrc80.includes('window.addEventListener("focus", handleWindowFocus)'),
+    "Staff #80: Date rollover checks periodically every 60s and listens to visibilitychange and window focus"
+  );
+
+  assert(
+    staffDashboardSrc80.includes("window.clearInterval(intervalId)") &&
+      staffDashboardSrc80.includes('document.removeEventListener("visibilitychange", handleVisibilityOrFocus)') &&
+      staffDashboardSrc80.includes('window.removeEventListener("focus", handleWindowFocus)'),
+    "Staff #80: Cleanup handles interval and event listeners correctly without leaking timers"
+  );
+
+  assert(
+    staffDashboardSrc80.includes("setIsFollowingToday(date === todayIst)") &&
+      staffDashboardSrc80.includes("setIsFollowingCustomCakeToday(date === todayIst)"),
+    "Staff #80: Selecting a date updates the following-today flag based on equality with the current todayIst"
+  );
+
+  // 4. Issue #104: unread badge (real modules: lib/staff/dashboard-state.ts, last-seen-store.ts)
+  const unreadRequests = [{ created_at: "2026-11-15T10:00:00.000Z" }];
+  const earlier = new Date("2026-11-15T09:00:00.000Z").getTime();
+  const sameInstant = new Date("2026-11-15T10:00:00.000Z").getTime();
+
+  assert(
+    hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: null, requests: unreadRequests }) === false,
+    "Staff #104: Server / pre-hydration render (lastSeen unknown) never shows the unread badge"
+  );
+  assert(
+    hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: earlier, requests: unreadRequests }) === true,
+    "Staff #104: Client shows the unread badge when the latest request is newer than last seen"
+  );
+  assert(
+    hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: sameInstant, requests: unreadRequests }) === false,
+    "Staff #104: A request at exactly the last-seen instant is not unread"
+  );
+  assert(
+    hasUnreadCustomCakes({ activeTab: "CUSTOM_CAKES", lastSeen: earlier, requests: unreadRequests }) === false,
+    "Staff #104: Viewing CUSTOM_CAKES tab suppresses the unread badge"
+  );
+  assert(
+    hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: earlier, requests: [] }) === false &&
+      hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: earlier, requests: [{ created_at: "not-a-date" }] }) === false,
+    "Staff #104: No requests or an unparseable timestamp never shows the badge"
+  );
+
+  assert(
+    resolveInitialLastSeen("2026-11-15T10:00:00.000Z", 5) === sameInstant &&
+      resolveInitialLastSeen(undefined, 5) === 5 &&
+      resolveInitialLastSeen("not-a-date", 5) === 5,
+    "Staff #104: First-visit seed is the latest request time, or now when there is none / it is invalid"
+  );
+
+  // Last-seen store against a fake browser localStorage
+  type FakeWindow = {
+    localStorage: { getItem(k: string): string | null; setItem(k: string, v: string): void };
+    addEventListener(type: string, cb: () => void): void;
+    removeEventListener(type: string, cb: () => void): void;
+  };
+  const globalWithWindow = globalThis as unknown as { window?: FakeWindow };
+  const storageData = new Map<string, string>();
+  const windowListeners = new Set<() => void>();
+  globalWithWindow.window = {
+    localStorage: {
+      getItem: (k) => storageData.get(k) ?? null,
+      setItem: (k, v) => {
+        storageData.set(k, v);
+      },
+    },
+    addEventListener: (type, cb) => {
+      if (type === "storage") windowListeners.add(cb);
+    },
+    removeEventListener: (type, cb) => {
+      if (type === "storage") windowListeners.delete(cb);
+    },
+  };
+
+  try {
+    const key104 = "namma_test_last_seen_a";
+    assert(readLastSeen(key104) === null, "Staff #104: Last-seen store reads null before anything is stored");
+
+    let notified = 0;
+    const unsubscribe = subscribeLastSeen(() => {
+      notified += 1;
+    });
+
+    // First visit: seed from the queue, as the dashboard's mount effect does
+    writeLastSeen(key104, resolveInitialLastSeen("2026-11-15T10:00:00.000Z", Date.now()));
+    assert(
+      readLastSeen(key104) === sameInstant && notified === 1 && storageData.get(key104) === String(sameInstant),
+      "Staff #104: Seeding persists to localStorage, is readable immediately and notifies subscribers (same-tab writes fire no storage event)"
+    );
+    assert(
+      hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: readLastSeen(key104), requests: unreadRequests }) === false &&
+        hasUnreadCustomCakes({
+          activeTab: "ORDERS",
+          lastSeen: readLastSeen(key104),
+          requests: [{ created_at: "2026-11-15T10:30:00.000Z" }, ...unreadRequests],
+        }) === true,
+    "Staff #104: After seeding, existing requests are seen but a newer request raises the badge on a first-time browser"
+    );
+
+    // Another tab writes a newer value: storage wins; a stale value never moves it back
+    storageData.set(key104, String(sameInstant + 5000));
+    assert(readLastSeen(key104) === sameInstant + 5000, "Staff #104: A newer value from another tab is picked up");
+    writeLastSeen(key104, sameInstant);
+    assert(readLastSeen(key104) === sameInstant + 5000, "Staff #104: Last seen never moves backwards");
+
+    // Unreadable / unwritable storage still works in memory for the session
+    const key104b = "namma_test_last_seen_b";
+    const realWindow = globalWithWindow.window;
+    globalWithWindow.window = {
+      ...realWindow,
+      localStorage: {
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        setItem: () => {
+          throw new Error("blocked");
+        },
+      },
+    };
+    writeLastSeen(key104b, 12345);
+    assert(readLastSeen(key104b) === 12345, "Staff #104: Blocked localStorage falls back to in-memory last seen without throwing");
+    globalWithWindow.window = realWindow;
+
+    unsubscribe();
+    const before = notified;
+    writeLastSeen(key104, sameInstant + 10000);
+    assert(
+      notified === before && windowListeners.size === 0,
+      "Staff #104: Unsubscribing removes the store listener and the storage event listener"
+    );
+  } finally {
+    delete globalWithWindow.window;
+  }
+
+  assert(
+    readLastSeen("namma_test_last_seen_never_written") === null,
+    "Staff #104: Last-seen store is safe to read where window does not exist (server)"
+  );
+
+  assert(
+    staffDashboardSrc80.includes("React.useSyncExternalStore(") &&
+      staffDashboardSrc80.includes("subscribeLastSeen,") &&
+      staffDashboardSrc80.includes("resolveInitialLastSeen(customCakeRequests[0]?.created_at, Date.now())") &&
+      !staffDashboardSrc80.includes("sessionLastSeen") &&
+      !staffDashboardSrc80.includes("const [lastSeenTimestamp, setLastSeenTimestamp] = React.useState<number>("),
+    "Staff #104: StaffDashboard reads last seen via useSyncExternalStore (null server snapshot), seeds it on first visit, and has no localStorage-in-useState initializer"
+  );
+
+  // 5. Issue #100: Suppress duplicate custom cake order notification
+  const migration0028Path = path.join(
+    process.cwd(),
+    "supabase/migrations/0028_suppress_custom_cake_order_notification.sql"
+  );
+  assert(
+    fs.existsSync(migration0028Path),
+    "Notification #100: Migration 0028 file exists"
+  );
+
+  const migration0028Src = fs.readFileSync(migration0028Path, "utf8");
+  assert(
+    migration0028Src.includes("if new.custom_request_id is not null then") &&
+      migration0028Src.includes("return new;") &&
+      migration0028Src.includes("public.on_order_created_notification()"),
+    "Notification #100: Migration 0028 suppresses NEW_ORDER notification for orders with custom_request_id"
+  );
+
+  const test016Path = path.join(
+    process.cwd(),
+    "supabase/tests/016_custom_cake_order_notification.test.sql"
+  );
+  assert(
+    fs.existsSync(test016Path),
+    "Notification #100: pgTAP test 016 exists for notification suppression verification"
+  );
+
+  const test016Src = fs.readFileSync(test016Path, "utf8");
+  assert(
+    test016Src.includes("Converted custom cake order does NOT generate a duplicate NEW_ORDER notification") &&
+      test016Src.includes("Regular order generates exactly one portal notification"),
+    "Notification #100: pgTAP test 016 verifies both regular order notification and custom cake suppression"
   );
 
   console.log("\n========================================================");

@@ -38,6 +38,16 @@ import {
   getCustomCakeStaffStatus,
   matchesStaffFilter,
 } from "@/lib/staff/custom-cake-workflow";
+import {
+  hasUnreadCustomCakes as computeHasUnreadCustomCakes,
+  resolveDateRollover,
+  resolveInitialLastSeen,
+} from "@/lib/staff/dashboard-state";
+import {
+  readLastSeen,
+  subscribeLastSeen,
+  writeLastSeen,
+} from "@/lib/staff/last-seen-store";
 
 interface StaffDashboardProps {
   orders: StaffOrder[];
@@ -71,8 +81,12 @@ export function StaffDashboard({
     "ORDERS"
   );
 
-  // Common today date in IST
-  const todayIst = React.useMemo(() => getIstDateString(), []);
+  // Common today date in IST (dynamic: tracks Asia/Kolkata date changes across midnight, #80)
+  const [todayIst, setTodayIst] = React.useState<string>(() => getIstDateString());
+
+  // Explicit tracking for whether views are actively following "today" vs a user-chosen historical/future date (#80)
+  const [isFollowingToday, setIsFollowingToday] = React.useState<boolean>(true);
+  const [isFollowingCustomCakeToday, setIsFollowingCustomCakeToday] = React.useState<boolean>(true);
 
   // Orders queue state
   const [selectedDate, setSelectedDate] = React.useState<string>(todayIst);
@@ -233,12 +247,16 @@ export function StaffDashboard({
     if (deepLinkRequest) {
       setActiveTab("CUSTOM_CAKES");
       setActiveCustomCakeFilter("ALL");
-      setSelectedCustomCakeDate(getIstDateString(deepLinkRequest.created_at));
+      const reqDate = getIstDateString(deepLinkRequest.created_at);
+      setSelectedCustomCakeDate(reqDate);
+      setIsFollowingCustomCakeToday(reqDate === todayIst);
       setSelectedCustomCakeId(deepLinkRequest.id);
     } else if (deepLinkOrder) {
       setActiveTab("ORDERS");
       setActiveOrderFilter("ALL");
-      setSelectedDate(getOrderPickupDateIst(deepLinkOrder));
+      const orderDate = getOrderPickupDateIst(deepLinkOrder);
+      setSelectedDate(orderDate);
+      setIsFollowingToday(orderDate === todayIst);
       setSelectedOrderId(deepLinkOrder.id);
     } else if (deepLinkGaveUp) {
       // A specific record was linked but is permanently missing/inaccessible: still
@@ -276,56 +294,120 @@ export function StaffDashboard({
     }
   }, [deepLinkMissing, deepLinkKey, customCakeRequests, orders, router]);
 
+  // Refs mirror the latest values so the rollover timer and listeners are created once
+  // and are never torn down by data updates (#80)
+  const todayIstRef = React.useRef(todayIst);
+  const ordersRef = React.useRef(orders);
+  const customCakeRequestsRef = React.useRef(customCakeRequests);
+  const isFollowingTodayRef = React.useRef(isFollowingToday);
+  const isFollowingCustomCakeTodayRef = React.useRef(isFollowingCustomCakeToday);
+  const selectedOrderIdRef = React.useRef(selectedOrderId);
+  const selectedCustomCakeIdRef = React.useRef(selectedCustomCakeId);
+
+  React.useEffect(() => {
+    todayIstRef.current = todayIst;
+    ordersRef.current = orders;
+    customCakeRequestsRef.current = customCakeRequests;
+    isFollowingTodayRef.current = isFollowingToday;
+    isFollowingCustomCakeTodayRef.current = isFollowingCustomCakeToday;
+    selectedOrderIdRef.current = selectedOrderId;
+    selectedCustomCakeIdRef.current = selectedCustomCakeId;
+  });
+
+  // IST (Asia/Kolkata) date rollover (#80). The decision is pure (resolveDateRollover);
+  // state setters and router.refresh() run here, never inside a state updater.
+  const checkDateRollover = React.useCallback(() => {
+    const result = resolveDateRollover({
+      previousToday: todayIstRef.current,
+      currentToday: getIstDateString(),
+      followingOrdersToday: isFollowingTodayRef.current,
+      followingCustomCakesToday: isFollowingCustomCakeTodayRef.current,
+      selectedOrderId: selectedOrderIdRef.current,
+      selectedCustomCakeId: selectedCustomCakeIdRef.current,
+      orders: ordersRef.current,
+      customCakeRequests: customCakeRequestsRef.current,
+    });
+    if (!result) return;
+
+    todayIstRef.current = result.todayIst;
+    setTodayIst(result.todayIst);
+    if (result.orders) {
+      setSelectedDate(result.orders.selectedDate);
+      setSelectedOrderId(result.orders.selectedOrderId);
+    }
+    if (result.customCakes) {
+      setSelectedCustomCakeDate(result.customCakes.selectedDate);
+      setSelectedCustomCakeId(result.customCakes.selectedId);
+    }
+    if (result.shouldClearUrlSelection) clearUrlSelection();
+    if (result.shouldRefresh) router.refresh();
+  }, [clearUrlSelection, router]);
+
+  // Periodic 60s timer and visibility/focus synchronization for date rollover (#80)
+  React.useEffect(() => {
+    const intervalId = window.setInterval(checkDateRollover, 60000);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        checkDateRollover();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      checkDateRollover();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [checkDateRollover]);
+
   // User-scoped unread custom cake tracking
   const storageKey = React.useMemo(() => {
     return `namma_bakery_staff_custom_cake_last_seen_${userEmail || "default"}`;
   }, [userEmail]);
 
-  // Read initial seen timestamp lazily from localStorage or default to latest request timestamp
-  const [lastSeenTimestamp, setLastSeenTimestamp] = React.useState<number>(() => {
-    const latestReq = customCakeRequests[0];
-    if (typeof window === "undefined") {
-      return latestReq ? new Date(latestReq.created_at).getTime() : 0;
-    }
-    const initialTime = latestReq ? new Date(latestReq.created_at).getTime() : Date.now();
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        const parsed = parseInt(stored, 10);
-        if (!isNaN(parsed)) return parsed;
-      }
-      localStorage.setItem(storageKey, String(initialTime));
-      return initialTime;
-    } catch {
-      return initialTime;
-    }
-  });
+  // The last-seen timestamp lives in an external store. The server snapshot is null, so
+  // the first client render matches the server HTML; the stored value is read after
+  // hydration (#104).
+  const lastSeen = React.useSyncExternalStore(
+    subscribeLastSeen,
+    () => readLastSeen(storageKey),
+    () => null
+  );
+
+  // First visit on this browser: requests already in the queue count as seen, so only
+  // later requests raise the badge.
+  React.useEffect(() => {
+    if (lastSeen !== null) return;
+    writeLastSeen(
+      storageKey,
+      resolveInitialLastSeen(customCakeRequests[0]?.created_at, Date.now())
+    );
+  }, [lastSeen, storageKey, customCakeRequests]);
 
   // Switch tabs and mark as seen when opening Custom Cake Requests
   const handleSelectTab = (tab: "ORDERS" | "CUSTOM_CAKES" | "ORDER_HISTORY") => {
     setActiveTab(tab);
     if (tab === "CUSTOM_CAKES") {
-      const now = Date.now();
-      try {
-        localStorage.setItem(storageKey, String(now));
-      } catch {
-        // Safe guard
-      }
-      setLastSeenTimestamp(now);
+      writeLastSeen(storageKey, Date.now());
     }
   };
 
-  // Determine if there is any custom cake request created after the last seen timestamp
-  const hasUnreadCustomCakes = React.useMemo(() => {
-    if (activeTab === "CUSTOM_CAKES") return false;
-    if (customCakeRequests.length === 0) return false;
-
-    const latest = customCakeRequests[0];
-    if (!latest?.created_at) return false;
-
-    const latestTime = new Date(latest.created_at).getTime();
-    return latestTime > lastSeenTimestamp;
-  }, [activeTab, lastSeenTimestamp, customCakeRequests]);
+  const hasUnreadCustomCakes = React.useMemo(
+    () =>
+      computeHasUnreadCustomCakes({
+        activeTab,
+        lastSeen,
+        requests: customCakeRequests,
+      }),
+    [activeTab, lastSeen, customCakeRequests]
+  );
 
   // Selected order: resolved only from the explicit selected ID (kept across status
   // changes so the panel stays on the same order after an action). Never auto-selects.
@@ -363,6 +445,7 @@ export function StaffDashboard({
   };
 
   const handleOrderDateChange = (date: string) => {
+    setIsFollowingToday(date === todayIst);
     setSelectedDate(date);
     // Drop the selection if it does not belong to the newly selected date
     const current = selectedOrderId
@@ -396,6 +479,7 @@ export function StaffDashboard({
   };
 
   const handleCustomCakeDateChange = (date: string) => {
+    setIsFollowingCustomCakeToday(date === todayIst);
     setSelectedCustomCakeDate(date);
     const stillValid =
       selectedCustomCakeId !== null &&
