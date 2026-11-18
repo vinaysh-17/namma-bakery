@@ -8,7 +8,17 @@ import { useCart } from "@/lib/cart/context";
 export function HeaderCartButton() {
   const { itemCount, isHydrated } = useCart();
 
-  const countDisplay = isHydrated ? itemCount : 0;
+  // Local mount guard: the header sits inside a Suspense boundary that can hydrate after
+  // CartProvider's effect has already set isHydrated, so context alone cannot guarantee the
+  // first client render matches the server HTML. Effects never run during hydration.
+  const [isMounted, setIsMounted] = React.useState(false);
+  React.useEffect(() => {
+    // Intentional: flipping this flag after mount is the purpose of the guard.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsMounted(true);
+  }, []);
+
+  const countDisplay = isMounted && isHydrated ? itemCount : 0;
   const label =
     countDisplay > 0
       ? `Shopping cart, ${countDisplay} ${countDisplay === 1 ? "item" : "items"}`
