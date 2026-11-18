@@ -72,7 +72,7 @@ export function HeroImageFrame({ src, alt }: HeroImageFrameProps) {
           src={src}
           alt={alt}
           fill
-          priority
+          preload
           sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 480px"
           className="object-cover object-top animate-hero-image transition-transform duration-700 ease-out sm:group-hover:scale-[1.025]"
         />

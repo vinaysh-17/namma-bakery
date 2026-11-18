@@ -52,7 +52,11 @@ export function PopularCakes({ products }: PopularCakesProps) {
         <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {popularList.map((product, index) => (
             <ScrollReveal key={product.id} delayMs={index * 100}>
-              <ProductCard product={product} />
+              <ProductCard
+                product={product}
+                preload={false}
+                loading="lazy"
+              />
             </ScrollReveal>
           ))}
         </div>

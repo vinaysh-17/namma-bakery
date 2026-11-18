@@ -31,6 +31,8 @@ interface ProductCardProps {
   product: Product;
   preload?: boolean;
   priority?: boolean;
+  loading?: "lazy" | "eager";
+  fetchPriority?: "high" | "low" | "auto";
 }
 
 function renderPlaceholderIcon(kind: string, categorySlug?: string) {
@@ -58,12 +60,18 @@ function CakeProductCard({
   product,
   preload,
   priority,
+  loading,
+  fetchPriority,
 }: {
   product: Product;
   preload?: boolean;
   priority?: boolean;
+  loading?: "lazy" | "eager";
+  fetchPriority?: "high" | "low" | "auto";
 }) {
   const shouldPreload = Boolean(preload ?? priority);
+  const resolvedLoading = shouldPreload ? undefined : loading;
+  const resolvedFetchPriority = fetchPriority ?? (shouldPreload ? "high" : undefined);
   const categorySlug = product.category?.slug ?? "cakes";
   const formattedPrice =
     typeof product.startingPricePaise === "number" &&
@@ -88,6 +96,8 @@ function CakeProductCard({
               alt={imageAlt}
               fill
               preload={shouldPreload || undefined}
+              loading={resolvedLoading}
+              fetchPriority={resolvedFetchPriority}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
               className="object-cover object-center transition-transform duration-500 ease-out sm:group-hover:scale-[1.025]"
             />
@@ -159,12 +169,18 @@ function SimpleProductCard({
   product,
   preload,
   priority,
+  loading,
+  fetchPriority,
 }: {
   product: Product;
   preload?: boolean;
   priority?: boolean;
+  loading?: "lazy" | "eager";
+  fetchPriority?: "high" | "low" | "auto";
 }) {
   const shouldPreload = Boolean(preload ?? priority);
+  const resolvedLoading = shouldPreload ? undefined : loading;
+  const resolvedFetchPriority = fetchPriority ?? (shouldPreload ? "high" : undefined);
   const { addItem } = useCart();
   const router = useRouter();
   const categorySlug = product.category?.slug ?? "menu";
@@ -301,6 +317,8 @@ function SimpleProductCard({
               alt={imageAlt}
               fill
               preload={shouldPreload || undefined}
+              loading={resolvedLoading}
+              fetchPriority={resolvedFetchPriority}
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
               className="object-cover object-center transition-transform duration-500 ease-out sm:group-hover:scale-[1.025]"
             />
@@ -592,13 +610,35 @@ function SimpleProductCard({
   );
 }
 
-export function ProductCard({ product, preload, priority }: ProductCardProps) {
+export function ProductCard({
+  product,
+  preload,
+  priority,
+  loading,
+  fetchPriority,
+}: ProductCardProps) {
   const categorySlug = product.category?.slug;
   const isCake = isCakeProduct(product, categorySlug);
 
   if (isCake) {
-    return <CakeProductCard product={product} preload={preload} priority={priority} />;
+    return (
+      <CakeProductCard
+        product={product}
+        preload={preload}
+        priority={priority}
+        loading={loading}
+        fetchPriority={fetchPriority}
+      />
+    );
   }
 
-  return <SimpleProductCard product={product} preload={preload} priority={priority} />;
+  return (
+    <SimpleProductCard
+      product={product}
+      preload={preload}
+      priority={priority}
+      loading={loading}
+      fetchPriority={fetchPriority}
+    />
+  );
 }
