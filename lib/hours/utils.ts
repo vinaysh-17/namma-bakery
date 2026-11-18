@@ -9,6 +9,35 @@ export function formatTime24To12(time24: string): string {
   return m === 0 ? `${h12}:00 ${suffix}` : `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
+const DAYS_IN_WEEK = 7;
+
+/**
+ * One-line summary of the configured opening hours, shown in the header, footer, hero,
+ * checkout and similar places.
+ *
+ * A closed weekday has no business_hours row (see archiveBusinessHourAction), so rows alone
+ * cannot say whether every day is covered. Fewer than seven distinct weekdays therefore means
+ * at least one day is closed, and a single "10:00 AM - 9:30 PM" range would wrongly read as
+ * "open every day".
+ */
+export function buildSummaryLabel(entries: BusinessHoursEntry[]): string {
+  if (entries.length === 0) return "Hours unavailable";
+
+  const distinctWeekdays = new Set(entries.map((e) => e.weekday));
+  if (distinctWeekdays.size < DAYS_IN_WEEK) return "Hours vary by day";
+
+  const first = entries[0];
+  const allSame = entries.every(
+    (e) => e.opens === first.opens && e.closes === first.closes
+  );
+
+  if (allSame) {
+    return `${formatTime24To12(first.opens)} – ${formatTime24To12(first.closes)}`;
+  }
+
+  return "Hours vary by day";
+}
+
 export function generatePickupWindows(
   entries: BusinessHoursEntry[],
   weekday: number
