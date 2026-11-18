@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { BusinessHoursData, BusinessHoursEntry } from "./types";
+import type { BusinessHoursData, BusinessHoursEntry, SpecialClosure } from "./types";
 import { buildSummaryLabel } from "./utils";
 
 const LOCATION_SLUG = "namma-bakery-rr-nagar";
@@ -52,6 +52,46 @@ export const getBusinessHoursData = cache(
         summaryLabel: buildSummaryLabel(entries),
         entries,
       };
+    } catch {
+      return null;
+    }
+  }
+);
+
+/**
+ * Special closure dates (festivals, maintenance...) from `fromDate` (inclusive) to `toDate`
+ * (inclusive, optional), as "YYYY-MM-DD" bakery-local dates. Public read: special_closures
+ * is readable by anonymous visitors, like business_hours.
+ *
+ * Returns null when the closures could not be loaded, so callers can fail closed instead of
+ * assuming the bakery is open.
+ */
+export const getSpecialClosures = cache(
+  async (fromDate: string, toDate?: string): Promise<SpecialClosure[] | null> => {
+    const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (!isDate(fromDate) || (toDate !== undefined && !isDate(toDate))) return null;
+
+    try {
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+      const locationId = await getActiveLocationId(supabase);
+      if (!locationId) return null;
+
+      let query = supabase
+        .from("special_closures")
+        .select("closure_date, reason")
+        .eq("location_id", locationId)
+        .gte("closure_date", fromDate)
+        .order("closure_date");
+      if (toDate !== undefined) query = query.lte("closure_date", toDate);
+
+      const { data: rows, error } = await query;
+      if (error || !rows) return null;
+
+      return rows.map((r: { closure_date: string; reason: string | null }) => ({
+        date: r.closure_date,
+        reason: r.reason,
+      }));
     } catch {
       return null;
     }

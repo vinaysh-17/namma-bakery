@@ -29,8 +29,8 @@ import {
 import { useOrderingPausedStatus } from "@/lib/pickup/use-store-status";
 import { OrderingPausedBanner } from "@/components/store/ordering-paused-banner";
 import { cn } from "@/lib/utils";
-import { generatePickupWindows } from "@/lib/hours/utils";
-import type { BusinessHoursEntry } from "@/lib/hours/types";
+import { describePickupUnavailability, getPickupAvailability } from "@/lib/hours/utils";
+import type { BusinessHoursEntry, SpecialClosure } from "@/lib/hours/types";
 
 const CAKE_OCCASIONS = [
   "Birthday Celebration",
@@ -75,8 +75,10 @@ const SHAPE_OPTIONS = [
 
 export function CustomCakeForm({
   businessHoursEntries,
+  specialClosures,
 }: {
   businessHoursEntries?: BusinessHoursEntry[] | null;
+  specialClosures?: SpecialClosure[] | null;
 }) {
   const router = useRouter();
 
@@ -103,11 +105,32 @@ export function CustomCakeForm({
   const [shape, setShape] = React.useState(SHAPE_OPTIONS[0]);
   const [preferredPickupDate, setPreferredPickupDate] = React.useState(tomorrowIst);
 
-  const pickupWindows = React.useMemo(() => {
-    if (!businessHoursEntries || businessHoursEntries.length === 0) return [];
-    const weekday = new Date(`${preferredPickupDate}T00:00:00Z`).getUTCDay();
-    return generatePickupWindows(businessHoursEntries, weekday);
-  }, [businessHoursEntries, preferredPickupDate]);
+  // What the bakery offers on the chosen date: weekly hours plus special closures. The server
+  // runs the same check (lib/hours/utils) when the enquiry is submitted.
+  const pickupAvailability = React.useMemo(
+    () => getPickupAvailability(businessHoursEntries, specialClosures, preferredPickupDate),
+    [businessHoursEntries, specialClosures, preferredPickupDate]
+  );
+  const pickupWindows = React.useMemo(
+    () =>
+      pickupAvailability.status === "OPEN"
+        ? pickupAvailability.windows.map((w) => w.label)
+        : [],
+    [pickupAvailability]
+  );
+  const pickupUnavailableMessage =
+    pickupAvailability.status === "OPEN"
+      ? null
+      : describePickupUnavailability(pickupAvailability, preferredPickupDate);
+  const noWindowsOptionLabel =
+    pickupAvailability.status === "SPECIAL_CLOSURE" ||
+    pickupAvailability.status === "CLOSED_WEEKDAY"
+      ? "Closed on this date"
+      : pickupAvailability.status === "INVALID_DATE"
+        ? "Choose a pickup date first"
+        : pickupAvailability.status === "NO_WINDOWS"
+          ? "No pickup windows available"
+          : "Pickup hours unavailable";
 
   const [preferredPickupTime, setPreferredPickupTime] = React.useState(
     () => pickupWindows[Math.min(2, pickupWindows.length - 1)] ?? ""
@@ -138,6 +161,7 @@ export function CustomCakeForm({
   const [nameError, setNameError] = React.useState<string | null>(null);
   const [phoneError, setPhoneError] = React.useState<string | null>(null);
   const [dateError, setDateError] = React.useState<string | null>(null);
+  const [timeError, setTimeError] = React.useState<string | null>(null);
   const [weightError, setWeightError] = React.useState<string | null>(null);
   const [fileError, setFileError] = React.useState<string | null>(null);
 
@@ -146,6 +170,7 @@ export function CustomCakeForm({
   const nameRef = React.useRef<HTMLInputElement | null>(null);
   const phoneRef = React.useRef<HTMLInputElement | null>(null);
   const dateRef = React.useRef<HTMLInputElement | null>(null);
+  const timeRef = React.useRef<HTMLSelectElement | null>(null);
   const customWeightRef = React.useRef<HTMLInputElement | null>(null);
   const errorRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -196,6 +221,7 @@ export function CustomCakeForm({
     setNameError(null);
     setPhoneError(null);
     setDateError(null);
+    setTimeError(null);
     setWeightError(null);
     setFileError(null);
 
@@ -369,6 +395,7 @@ export function CustomCakeForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setTimeError(null);
 
     // Check every field and show each problem under its own field, then take the
     // customer to the first one on the page.
@@ -388,7 +415,7 @@ export function CustomCakeForm({
     // Same rule as the server: pickup from tomorrow (IST) onwards.
     const dateCheck = customCakePickupDateSchema.safeParse(preferredPickupDate);
     const nextDateError = dateCheck.success
-      ? null
+      ? pickupUnavailableMessage
       : dateCheck.error.issues[0]?.message || "Please choose a pickup date.";
 
     const nextNameError =
@@ -461,6 +488,21 @@ export function CustomCakeForm({
       const res = await submitCustomCakeRequestAction(formData);
 
       if (!res.success || !res.token) {
+        // A pickup problem the server found (closed day, special closure, a window that is not
+        // offered): show it at the date or time field, like the form's own checks.
+        if (res.field === "preferredPickupDate" || res.field === "preferredPickupTime") {
+          const fieldMessage = res.error || "Please check your pickup date and time.";
+          if (res.field === "preferredPickupTime") {
+            setTimeError(fieldMessage);
+          } else {
+            setDateError(fieldMessage);
+          }
+          const field = res.field === "preferredPickupTime" ? timeRef.current : dateRef.current;
+          field?.scrollIntoView({ behavior: "smooth", block: "center" });
+          field?.focus({ preventScroll: true });
+          setIsSubmitting(false);
+          return;
+        }
         setErrorMessage(res.error || "Failed to submit custom cake enquiry. Please check details.");
         setIsSubmitting(false);
         return;
@@ -1074,9 +1116,16 @@ export function CustomCakeForm({
                   if (dateError && customCakePickupDateSchema.safeParse(e.target.value).success) {
                     setDateError(null);
                   }
+                  if (timeError) setTimeError(null);
                 }}
                 aria-invalid={!!dateError}
-                aria-describedby={dateError ? "preferredPickupDate-error" : undefined}
+                aria-describedby={
+                  dateError
+                    ? "preferredPickupDate-error"
+                    : pickupUnavailableMessage
+                      ? "preferredPickupDate-availability"
+                      : undefined
+                }
                 className={`w-full min-h-[48px] rounded-sm border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none transition-colors ${
                   dateError
                     ? "border-destructive ring-1 ring-destructive focus-visible:ring-2 focus-visible:ring-destructive"
@@ -1088,10 +1137,20 @@ export function CustomCakeForm({
               <div
                 id="preferredPickupDate-error"
                 role="alert"
-                className="flex items-center gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
+                className="flex items-start gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
               >
-                <AlertCircle className="size-3.5 shrink-0" />
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                 <span>{dateError}</span>
+              </div>
+            )}
+            {!dateError && pickupUnavailableMessage && (
+              <div
+                id="preferredPickupDate-availability"
+                role="status"
+                className="flex items-start gap-1.5 pt-1 text-xs font-medium text-amber-800 dark:text-amber-300"
+              >
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{pickupUnavailableMessage}</span>
               </div>
             )}
             <p className="text-[11px] text-muted-foreground">
@@ -1109,14 +1168,31 @@ export function CustomCakeForm({
             <div className="relative">
               <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-caramel" />
               <select
+                ref={timeRef}
                 id="preferredPickupTime"
                 required
+                disabled={pickupWindows.length === 0}
                 value={validPickupTime}
-                onChange={(e) => setPreferredPickupTime(e.target.value)}
-                className="w-full min-h-[48px] rounded-sm border border-border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+                onChange={(e) => {
+                  setPreferredPickupTime(e.target.value);
+                  if (timeError) setTimeError(null);
+                }}
+                aria-invalid={!!timeError}
+                aria-describedby={
+                  timeError
+                    ? "preferredPickupTime-error"
+                    : pickupUnavailableMessage && !dateError
+                      ? "preferredPickupDate-availability"
+                      : undefined
+                }
+                className={`w-full min-h-[48px] rounded-sm border bg-background pl-10 pr-3.5 text-xs text-foreground focus-visible:outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  timeError
+                    ? "border-destructive ring-1 ring-destructive focus-visible:ring-2 focus-visible:ring-destructive"
+                    : "border-border focus-visible:ring-2 focus-visible:ring-caramel"
+                }`}
               >
                 {pickupWindows.length === 0 ? (
-                  <option value="" disabled>Pickup hours unavailable</option>
+                  <option value="" disabled>{noWindowsOptionLabel}</option>
                 ) : (
                   pickupWindows.map((win) => (
                     <option key={win} value={win}>
@@ -1126,6 +1202,16 @@ export function CustomCakeForm({
                 )}
               </select>
             </div>
+            {timeError && (
+              <div
+                id="preferredPickupTime-error"
+                role="alert"
+                className="flex items-start gap-1.5 pt-1 text-xs font-medium text-destructive animate-in fade-in slide-in-from-top-1"
+              >
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{timeError}</span>
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">
               Bakery counter pickup at BEML Layout, RR Nagar.
             </p>

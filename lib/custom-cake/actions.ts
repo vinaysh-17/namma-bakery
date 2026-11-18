@@ -11,6 +11,8 @@ import {
 } from "./validation";
 import type { CustomCakePublicView } from "./types";
 import { getLinkedOrdersByRequestId } from "./linked-orders";
+import { getBusinessHoursData, getSpecialClosures } from "@/lib/hours/queries";
+import { validateRequestedPickup, type RequestedPickupField } from "@/lib/hours/utils";
 
 const DEFAULT_LOCATION_SLUG = "namma-bakery-rr-nagar";
 
@@ -19,26 +21,8 @@ export interface CustomCakeSubmitResult {
   requestNumber?: string;
   token?: string;
   error?: string;
-}
-
-/**
- * Combines a calendar date (YYYY-MM-DD) and a time string into an Asia/Kolkata ISO timestamptz string.
- */
-function buildIstPickupIso(dateStr: string, timeStr: string): string {
-  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  let hours = 16;
-  let minutes = 0;
-
-  if (match) {
-    hours = parseInt(match[1], 10);
-    minutes = parseInt(match[2], 10);
-    const meridiem = match[3]?.toUpperCase();
-    if (meridiem === "PM" && hours < 12) hours += 12;
-    if (meridiem === "AM" && hours === 12) hours = 0;
-  }
-
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${dateStr}T${pad(hours)}:${pad(minutes)}:00+05:30`;
+  /** Set when the error belongs to one form field, so the form can show it there. */
+  field?: RequestedPickupField;
 }
 
 /**
@@ -156,6 +140,25 @@ export async function submitCustomCakeRequestAction(
 
     const locationId = locationData.id;
 
+    // 4b. The pickup date and time must be a real, open window: weekly hours and special
+    // closures are enforced here, not just in the form. An invalid time is rejected, never
+    // replaced with a default, and missing closure data fails closed.
+    const pickupDate = parsed.data.preferredPickupDate;
+    const [hours, closures] = await Promise.all([
+      getBusinessHoursData(),
+      getSpecialClosures(pickupDate, pickupDate),
+    ]);
+    const pickup = validateRequestedPickup({
+      entries: hours?.entries,
+      closures,
+      dateString: pickupDate,
+      timeLabel: parsed.data.preferredPickupTime,
+    });
+    if (!pickup.ok) {
+      return { success: false, error: pickup.message, field: pickup.field };
+    }
+    const pickupIso = pickup.pickupIso;
+
     // 5. Identify authenticated customer if logged in
     let customerId: string | null = null;
     try {
@@ -167,12 +170,6 @@ export async function submitCustomCakeRequestAction(
     } catch {
       customerId = null;
     }
-
-    // 6. Format pickup timestamp in IST
-    const pickupIso = buildIstPickupIso(
-      parsed.data.preferredPickupDate,
-      parsed.data.preferredPickupTime
-    );
 
     // 7. Invoke PostgreSQL submit_custom_request RPC
     const { data: rpcData, error: rpcError } = await supabase.rpc(

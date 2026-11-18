@@ -2,7 +2,8 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { CustomCakeHero } from "@/components/custom-cake/custom-cake-hero";
 import { CustomCakeForm } from "@/components/custom-cake/custom-cake-form";
-import { getBusinessHoursData } from "@/lib/hours/queries";
+import { getBusinessHoursData, getSpecialClosures } from "@/lib/hours/queries";
+import { getEarliestCustomCakePickupDate } from "@/lib/custom-cake/validation";
 
 export const instant = false;
 
@@ -23,6 +24,8 @@ export const metadata: Metadata = {
 
 export default async function CustomCakePage() {
   const hours = await getBusinessHoursData();
+  // Evaluated after the data fetch above, so the current date is read at request time.
+  const specialClosures = await getSpecialClosures(getEarliestCustomCakePickupDate());
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
@@ -34,7 +37,10 @@ export default async function CustomCakePage() {
           </div>
         }
       >
-        <CustomCakeForm businessHoursEntries={hours?.entries ?? null} />
+        <CustomCakeForm
+          businessHoursEntries={hours?.entries ?? null}
+          specialClosures={specialClosures}
+        />
       </Suspense>
     </div>
   );
