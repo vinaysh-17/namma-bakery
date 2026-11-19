@@ -82,7 +82,7 @@ export function Footer({ hoursLabel }: { hoursLabel?: string | null }) {
             type="button"
             onClick={scrollToTop}
             aria-label="Back to top"
-            className="inline-flex min-h-[44px] sm:min-h-[36px] items-center gap-1.5 rounded-sm border border-border/80 bg-background/60 px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-caramel/50 hover:bg-secondary/40 hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel cursor-pointer"
+            className="inline-flex min-touch-target min-h-[48px] items-center gap-1.5 rounded-sm border border-border/80 bg-background/60 px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-caramel/50 hover:bg-secondary/40 hover:text-caramel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel cursor-pointer"
           >
             <ArrowUp className="h-3.5 w-3.5 text-caramel" aria-hidden="true" />
             <span>Back to Top</span>
