@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import { getIstDateString } from "@/lib/utils/date";
 import {
@@ -49,6 +49,10 @@ export type ValidatePickupSlotResult =
 export async function validatePickupSlotAction(
   input: unknown
 ): Promise<ValidatePickupSlotResult> {
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Pickup slot validation is not available in Preview mode." };
+  }
+
   const clientIp = await getClientIp();
   const limit = checkRateLimit({
     key: `slotcheck:ip:${clientIp}`,

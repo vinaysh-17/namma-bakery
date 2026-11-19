@@ -11,6 +11,7 @@ import {
   getClientIp,
 } from "@/lib/security/rate-limiter";
 import { requireStaffSession } from "./auth";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import type { OrderStatus } from "@/lib/orders/types";
 
 export interface ActionState {
@@ -88,6 +89,8 @@ export async function staffLoginAction(
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -233,6 +236,8 @@ export async function transitionOrderAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
 
     // The persisted status is the source of truth (the screen can be out of date, e.g. a
@@ -394,6 +399,8 @@ export async function completeOrderAndRecordPaymentAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
 
     // Verify order exists and is eligible for completion
@@ -484,6 +491,8 @@ export async function recordStorePaymentAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
     const { error } = await supabase.rpc("record_store_payment", {
       p_order_id: params.orderId,
@@ -534,6 +543,8 @@ export async function addInternalNoteAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const trimmed = params.body.trim();
     if (!trimmed || trimmed.length > 1000) {
       return {

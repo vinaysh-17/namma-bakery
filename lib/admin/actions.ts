@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertAdminSession } from "./auth";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import { validateImageMagicBytes } from "@/lib/custom-cake/validation";
 import {
   adminCategorySchema,
@@ -45,6 +46,7 @@ export async function upsertCategoryAction(
   rawInput: AdminCategoryInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminCategorySchema.safeParse(rawInput);
@@ -126,6 +128,7 @@ export async function toggleCategoryVisibilityAction(
   isVisible: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -154,6 +157,7 @@ export async function archiveCategoryAction(
   isArchived: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -181,6 +185,7 @@ export async function deleteCategoryAction(
   categoryId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     if (!categoryId || typeof categoryId !== "string" || categoryId.trim().length === 0) {
@@ -233,6 +238,7 @@ export async function upsertProductAction(
   rawInput: AdminProductInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminProductSchema.safeParse(rawInput);
@@ -323,6 +329,7 @@ export async function toggleProductAvailabilityAction(
   isAvailable: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -356,6 +363,7 @@ export async function archiveProductAction(
   isArchived: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -383,6 +391,7 @@ export async function deleteProductAction(
   productId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     if (!productId || typeof productId !== "string" || productId.trim().length === 0) {
@@ -435,6 +444,7 @@ export async function uploadProductImageAction(
   formData: FormData
 ): Promise<AdminActionResult<{ id: string; storage_path: string; url: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const productId = formData.get("productId");
@@ -609,6 +619,7 @@ export async function deleteProductImageAction(
   imageId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     // L-1: Validate imageId format with Zod UUID schema
@@ -699,6 +710,7 @@ export async function upsertVariantAction(
   rawInput: AdminVariantInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminVariantSchema.safeParse(rawInput);
@@ -760,6 +772,7 @@ export async function toggleVariantAvailabilityAction(
   isAvailable: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -792,6 +805,7 @@ export async function archiveVariantAction(
   isArchived: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -817,6 +831,7 @@ export async function deleteVariantAction(
   variantId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -882,6 +897,7 @@ export async function upsertPriceTierRuleAction(
   rawInput: AdminPriceTierRuleInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminPriceTierRuleSchema.safeParse(rawInput);
@@ -980,6 +996,7 @@ export async function togglePriceTierRuleAction(
   isActive: boolean
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -1007,6 +1024,7 @@ export async function updateStoreSettingsAction(
   rawInput: AdminStoreSettingsInput
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminStoreSettingsSchema.safeParse(rawInput);
@@ -1042,6 +1060,7 @@ export async function toggleStorePauseAction(
   rawInput: AdminPauseStoreInput
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminPauseStoreSchema.safeParse(rawInput);
@@ -1092,6 +1111,7 @@ export async function addSpecialClosureAction(
   rawInput: AdminSpecialClosureInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminSpecialClosureSchema.safeParse(rawInput);
@@ -1146,6 +1166,7 @@ export async function removeSpecialClosureAction(
   closureId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
     const supabase = await createClient();
 
@@ -1177,6 +1198,7 @@ export async function updateSpecialClosureAction(
   rawInput: AdminSpecialClosureInput & { id: string }
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminSpecialClosureSchema.safeParse(rawInput);
@@ -1231,6 +1253,7 @@ export async function updateBusinessHourAction(
   rawInput: AdminBusinessHourInput
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = adminBusinessHourSchema.safeParse(rawInput);
@@ -1319,6 +1342,7 @@ export async function archiveBusinessHourAction(
   hourId: string
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     if (!hourId) {
@@ -1350,6 +1374,7 @@ export async function unarchiveBusinessHourAction(
   rawInput: { location_id: string; weekday: number; opens?: string; closes?: string }
 ): Promise<AdminActionResult<{ id: string }>> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const { location_id, weekday } = rawInput;
@@ -1449,6 +1474,7 @@ export async function updateStaffRoleAction(
   rawInput: AdminStaffRoleInput
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     const session = await assertAdminSession();
 
     const parsed = adminStaffRoleSchema.safeParse(rawInput);
@@ -1518,6 +1544,7 @@ export async function createStaffMemberAction(
   rawInput: CreateStaffMemberInput
 ): Promise<AdminActionResult<{ user_id: string }>> {
   try {
+    assertNotPreview();
     const session = await assertAdminSession();
 
     const parsed = createStaffMemberSchema.safeParse(rawInput);
@@ -1616,6 +1643,7 @@ export async function updateStaffMemberAction(
   rawInput: UpdateStaffMemberInput
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     await assertAdminSession();
 
     const parsed = updateStaffMemberSchema.safeParse(rawInput);
@@ -1690,6 +1718,7 @@ export async function removeStaffMemberAction(
   rawInput: RemoveStaffMemberInput
 ): Promise<AdminActionResult> {
   try {
+    assertNotPreview();
     const session = await assertAdminSession();
 
     const parsed = removeStaffMemberSchema.safeParse(rawInput);

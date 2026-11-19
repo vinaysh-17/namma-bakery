@@ -1,9 +1,10 @@
 "use server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
 import { notifyStaffChanged } from "@/lib/realtime/broadcast";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import {
   customCakeFormSchema,
   validateReferenceImageFile,
@@ -106,6 +107,8 @@ export async function submitCustomCakeRequestAction(
   }
 
   try {
+    assertNotPreview();
+
     const supabase = createAdminClient();
 
     // 4. Resolve configured bakery location ID authoritatively using admin client
@@ -429,6 +432,9 @@ export async function getCustomCakePublicViewAction(
     return { success: false, error: "Invalid tracking token format." };
   }
 
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Custom cake details are not available in Preview mode." };
+  }
   try {
     const supabase = createAdminClient();
 

@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { requireStaffSession } from "@/lib/staff/auth";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import { notifyCustomRequestChanged, notifyStaffChanged } from "@/lib/realtime/broadcast";
 import type { CustomCakeStatus } from "./types";
 
@@ -34,6 +35,8 @@ export async function updateCustomCakeStatusAction(params: {
   }
 
   try {
+    assertNotPreview();
+
 
     const { requestId, toStatus, message } = params;
 
@@ -150,6 +153,8 @@ export async function acceptCustomCakeAsOrderAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const { requestId, pricePaise, confirmedPickupAt, note } = params;
     if (
       !Number.isInteger(pricePaise) ||
@@ -270,6 +275,8 @@ export async function addCustomCakeStaffNoteAction(params: {
   }
 
   try {
+    assertNotPreview();
+
     const trimmed = params.body.trim();
     if (!trimmed || trimmed.length > 1000) {
       return {
@@ -312,6 +319,9 @@ export async function getCustomCakeSignedUrlAction(
     return { success: false, error: "Unauthorized: Staff privileges required." };
   }
 
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Reference images are not available in Preview mode." };
+  }
   try {
     const validPath =
       typeof storagePath === "string" &&

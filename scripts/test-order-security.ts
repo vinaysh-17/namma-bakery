@@ -3782,7 +3782,9 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
   );
 
   // 3. #85 Duplicate Slug & Special Closure Error Mapping
-  const adminActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8");
+  const adminActionsSrc = fs
+    .readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
   assert(
     adminActionsSrc.includes("products_slug_key") &&
       adminActionsSrc.includes(

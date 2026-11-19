@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
 import { customRequestTopic } from "@/lib/realtime/broadcast";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import { customCakeTrackingInputSchema } from "./validation";
@@ -163,6 +163,10 @@ export async function verifyCustomCakeTrackingAction(
   verifiedPhone?: string;
   error?: string;
 }> {
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Custom cake tracking is not available in Preview mode." };
+  }
+
   // 1. IP Rate Limiting
   const clientIp = await getClientIp();
   const ipLimit = checkRateLimit({
@@ -326,6 +330,10 @@ export async function getCustomCakeDashboardAction(): Promise<{
   verifiedPhone?: string;
   error?: string;
 }> {
+  if (!isAdminClientAvailable()) {
+    return { authenticated: false, error: "Custom cake tracking is not available in Preview mode." };
+  }
+
   try {
     const rawCookie = await getTrackingSessionCookie();
     const session = verifyTrackingSessionToken(rawCookie);

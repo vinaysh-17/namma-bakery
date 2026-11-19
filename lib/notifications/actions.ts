@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getStaffSession } from "@/lib/staff/auth";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import { getPortalNotifications } from "./queries";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +19,8 @@ export async function getPortalNotificationsAction() {
  */
 export async function markNotificationAsReadAction(id: string) {
   try {
+    assertNotPreview();
+
     if (!id || !UUID_RE.test(id)) {
       return { success: false, error: "Failed to mark notification as read." };
     }
@@ -55,6 +58,8 @@ export async function markNotificationAsReadAction(id: string) {
  */
 export async function markAllNotificationsAsReadAction() {
   try {
+    assertNotPreview();
+
     const session = await getStaffSession();
     if (!session.isStaff) {
       return { success: false, error: "Failed to mark all notifications as read." };

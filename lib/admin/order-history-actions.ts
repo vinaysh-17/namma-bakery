@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminSession } from "./auth";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import { drainCakeReferenceCleanupQueue } from "./order-history-storage";
 import {
   TYPED_CONFIRM_THRESHOLD,
@@ -110,6 +111,8 @@ export async function deleteOrderHistoryAction(
   input: z.input<typeof deleteSchema>
 ): Promise<Result<{ deleted: number; warning?: string }>> {
   try {
+    assertNotPreview();
+
     await assertAdminSession();
     const parsed = deleteSchema.safeParse(input);
     if (!parsed.success) return { success: false, error: "Invalid selection." };
@@ -159,6 +162,8 @@ export async function deleteOrderHistoryAction(
  */
 export async function cleanupReferencePhotosAction(): Promise<Result<{ removed: number }>> {
   try {
+    assertNotPreview();
+
     await assertAdminSession();
     const { removed } = await drainCakeReferenceCleanupQueue();
     return { success: true, data: { removed } };

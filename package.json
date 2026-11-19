@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:security": "npx tsx scripts/test-order-security.ts",
+    "test:preview-guard": "npx tsx scripts/test-preview-guard.ts",
     "images:optimize": "node scripts/optimize-product-images.mjs"
   },
   "dependencies": {

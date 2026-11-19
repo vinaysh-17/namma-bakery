@@ -1,6 +1,6 @@
 "use server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
 import { notifyStaffChanged } from "@/lib/realtime/broadcast";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import {
@@ -11,6 +11,7 @@ import {
 import type { PlaceOrderResult, ValidateCartResult, CartItemStatus } from "./types";
 import { mapCartRpcError } from "./cart-errors";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 
 const DEFAULT_LOCATION_SLUG = "namma-bakery-rr-nagar";
 
@@ -84,6 +85,8 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
   }
 
   try {
+    assertNotPreview();
+
     const supabase = createAdminClient();
 
     // 4. Resolve configured bakery location ID authoritatively using admin client
@@ -320,6 +323,10 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
  * re-validate everything atomically when the order is actually placed.
  */
 export async function validateCartAction(input: unknown): Promise<ValidateCartResult> {
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Cart validation is not available in Preview mode." };
+  }
+
   const clientIp = await getClientIp();
   const limit = checkRateLimit({
     key: `cartcheck:ip:${clientIp}`,
@@ -394,6 +401,10 @@ export async function validateCartAction(input: unknown): Promise<ValidateCartRe
 export async function lookupOrderTokenAction(
   input: unknown
 ): Promise<{ success: boolean; token?: string; error?: string }> {
+  if (!isAdminClientAvailable()) {
+    return { success: false, error: "Order lookup is not available in Preview mode." };
+  }
+
   // 1. IP Rate Limiting
   const clientIp = await getClientIp();
   const ipLimit = checkRateLimit({

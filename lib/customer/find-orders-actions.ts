@@ -1,7 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
+import { assertNotPreview } from "@/lib/security/preview-guard";
 import { indianPhoneSchema } from "@/lib/validation/common";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
 import {
@@ -78,6 +79,8 @@ export async function sendFindOrdersOtpAction(input: {
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
     const { error } = await supabase.auth.signInWithOtp({
       phone: phone.e164,
@@ -138,6 +141,8 @@ export async function verifyFindOrdersOtpAction(input: {
   }
 
   try {
+    assertNotPreview();
+
     const supabase = await createClient();
     const { data, error } = await supabase.auth.verifyOtp({
       phone: phone.e164,
@@ -184,6 +189,16 @@ export async function verifyFindOrdersOtpAction(input: {
  * Supabase session. Takes NO parameters on purpose: the phone comes from the session.
  */
 export async function getMyOrdersAction(): Promise<MyOrdersResult> {
+  if (!isAdminClientAvailable()) {
+    return {
+      authenticated: true,
+      maskedPhone: "",
+      orders: [],
+      customRequests: [],
+      error: "Order lookup is not available in Preview mode.",
+    };
+  }
+
   try {
     const supabase = await createClient();
     // getUser() re-validates the session with Supabase Auth (not just the cookie)

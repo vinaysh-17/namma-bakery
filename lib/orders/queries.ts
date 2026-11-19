@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isAdminClientAvailable } from "@/lib/supabase/admin";
 import type { OrderTrackDetails } from "./types";
 
 /**
@@ -14,6 +14,10 @@ import type { OrderTrackDetails } from "./types";
 export const getOrderByToken = cache(
   async (token: string): Promise<OrderTrackDetails | null> => {
     if (!token || typeof token !== "string" || token.trim().length === 0) {
+      return null;
+    }
+
+    if (!isAdminClientAvailable()) {
       return null;
     }
 

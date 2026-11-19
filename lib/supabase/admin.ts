@@ -27,3 +27,9 @@ export function createAdminClient() {
     },
   });
 }
+
+export function isAdminClientAvailable(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SECRET_KEY
+  );
+}
