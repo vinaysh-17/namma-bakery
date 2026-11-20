@@ -28,7 +28,7 @@ export function CheckoutOrderSummary({
   priceStatus = "unverified",
 }: CheckoutOrderSummaryProps) {
   return (
-    <div className="sticky top-24 rounded-sm border border-border bg-card p-5 sm:p-6 space-y-5">
+    <div className="lg:sticky lg:top-24 rounded-sm border border-border bg-card p-5 sm:p-6 space-y-5 [contain:content]">
       <div className="flex items-center justify-between border-b border-border pb-3">
         <div className="flex items-center gap-2">
           <ShoppingBag className="h-5 w-5 text-caramel" aria-hidden="true" />

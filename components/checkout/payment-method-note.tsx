@@ -3,7 +3,7 @@ import { Banknote, CreditCard, QrCode, Store } from "lucide-react";
 
 export function PaymentMethodNote() {
   return (
-    <div className="rounded-sm border border-border bg-card p-5 sm:p-6 space-y-4">
+    <div className="rounded-sm border border-border bg-card p-5 sm:p-6 space-y-4 [contain:content]">
       <div className="flex items-center gap-2">
         <Store className="h-5 w-5 text-caramel" aria-hidden="true" />
         <h3 className="font-heading text-lg font-semibold text-foreground">

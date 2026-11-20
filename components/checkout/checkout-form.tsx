@@ -20,6 +20,7 @@ import { CustomerDetailsForm } from "./customer-details-form";
 import { CheckoutPickupSummary } from "./checkout-pickup-summary";
 import { PaymentMethodNote } from "./payment-method-note";
 import { CheckoutOrderSummary } from "./checkout-order-summary";
+import { CheckoutChangeSlotModal } from "./checkout-change-slot-modal";
 import { formatPaise } from "@/lib/utils/money";
 import { createIdempotencyKey } from "@/lib/orders/idempotency";
 import { useCartValidation } from "@/lib/cart/use-cart-validation";
@@ -62,12 +63,23 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
     isHydrated,
     pickupDate,
     pickupSlot,
+    setPickupDate,
+    setPickupSlot,
     clearCart,
     applyLivePrices,
     removeItems,
     pickupSlotNotice,
     invalidatePickupSlot,
   } = useCart();
+
+  // Dialog state for in-place pickup slot modification
+  const [isChangeSlotOpen, setIsChangeSlotOpen] = React.useState(false);
+
+  // Maximum lead time among all items in cart
+  const maxLeadMinutes = React.useMemo(() => {
+    if (items.length === 0) return 0;
+    return Math.max(0, ...items.map((i) => i.leadTimeMinutes ?? 0));
+  }, [items]);
 
   // Live menu check (#75): shows what changed since the items were added to the cart
   const cartValidation = useCartValidation(items, isHydrated && !isEmpty);
@@ -93,6 +105,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
 
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const [submitErrorCode, setSubmitErrorCode] = React.useState<string | null>(null);
 
   const handleFieldChange = React.useCallback(
     (field: keyof CustomerDetailsFormInput, value: string) => {
@@ -106,6 +119,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
       });
       if (submitError) {
         setSubmitError(null);
+        setSubmitErrorCode(null);
       }
     },
     [submitError]
@@ -119,6 +133,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
     // 1. Guard against empty cart or missing pickup slot
     if (isEmpty || !pickupSlot?.slotStart) {
       setSubmitError("Please ensure you have items and a pickup slot selected.");
+      setSubmitErrorCode(null);
       return;
     }
 
@@ -129,29 +144,31 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
       const fieldErrors: Partial<Record<keyof CustomerDetailsFormInput, string>> =
         {};
       for (const issue of result.error.issues) {
-        const path = issue.path[0] as keyof CustomerDetailsFormInput;
-        if (path && !fieldErrors[path]) {
-          fieldErrors[path] = issue.message;
+        const field = issue.path[0] as keyof CustomerDetailsFormInput;
+        if (field && !fieldErrors[field]) {
+          fieldErrors[field] = issue.message;
         }
       }
       setErrors(fieldErrors);
 
-      // Focus first invalid input
-      const firstErrorField = Object.keys(fieldErrors)[0];
-      if (firstErrorField) {
-        const element = document.getElementById(firstErrorField);
+      // Focus the first invalid field for accessibility
+      const firstField = Object.keys(fieldErrors)[0];
+      if (firstField) {
+        const element = document.getElementById(firstField);
         element?.focus();
       }
       return;
     }
 
+    // Clear previous form validation errors
     setErrors({});
     setSubmitError(null);
+    setSubmitErrorCode(null);
     setIsSubmitting(true);
     inFlightRef.current = true;
 
     try {
-      // 3. Prepare payload for server-side verification and order placement
+      // 3. Prepare payload for Server Action
       const itemsPayload = items.map((item) => ({
         productId: item.productId,
         kind: item.kind,
@@ -235,6 +252,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
         attemptRef.current = null;
         inFlightRef.current = false;
         setSubmitError(actionResult.error);
+        setSubmitErrorCode(actionResult.code ?? null);
         setIsSubmitting(false);
         // The cart no longer matches the menu: show exactly which items changed
         if (actionResult.code && CART_CHANGED_CODES.has(actionResult.code)) {
@@ -244,6 +262,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
         if (actionResult.code && PICKUP_TIME_CODES.has(actionResult.code)) {
           invalidatePickupSlot(actionResult.error);
           setSubmitError(null);
+          setSubmitErrorCode(null);
         }
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
@@ -261,6 +280,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
       setSubmitError(
         "A connection issue occurred while submitting your order. Please check your network and try again. If your order was already placed, retrying will not create a second one."
       );
+      setSubmitErrorCode(null);
       setIsSubmitting(false);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -291,7 +311,7 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
         <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
           Your cart is empty
         </h1>
-        <p className="mt-3 max-w-md mx-auto text-sm leading-relaxed text-muted-foreground sm:text-base">
+        <p className="mt-3 max-w-md mx-auto text-sm leading-relaxed text-muted-foreground sm:base">
           You don&apos;t have any treats in your cart yet. Please select items from our menu before checking out.
         </p>
         <div className="mt-8">
@@ -323,15 +343,9 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
 
       {/* Page Title */}
       <div className="mb-8 border-b border-border pb-6">
-        <span className="font-kannada text-xs font-medium text-caramel block">
-          ಆರ್ಡರ್ ಪರಿಶೀಲನೆ ಮತ್ತು ದೃಢೀಕರಣ
-        </span>
-        <h1 className="mt-1 font-heading text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+        <h1 className="font-heading text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
           Bakery Checkout
         </h1>
-        <p className="mt-1.5 text-xs sm:text-sm text-muted-foreground">
-          Review your order details and provide contact information for store pickup in RR Nagar.
-        </p>
       </div>
 
       {/* Submission Error Banner */}
@@ -339,12 +353,35 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
         <div
           role="alert"
           aria-live="assertive"
-          className="mb-6 flex items-start gap-2.5 rounded-sm border border-destructive/40 bg-destructive/10 p-3 sm:p-4 text-xs text-destructive dark:bg-destructive/20 sm:text-sm animate-in fade-in"
+          className={`mb-6 flex items-start gap-2.5 rounded-sm border p-3 sm:p-4 text-xs sm:text-sm animate-in fade-in ${
+            submitErrorCode === "PREVIEW_READ_ONLY"
+              ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200"
+              : "border-destructive/40 bg-destructive/10 text-destructive dark:bg-destructive/20"
+          }`}
         >
-          <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 shrink-0 mt-0.5" aria-hidden="true" />
+          <AlertCircle
+            className={`h-4 w-4 sm:h-5 sm:w-5 shrink-0 mt-0.5 ${
+              submitErrorCode === "PREVIEW_READ_ONLY"
+                ? "text-amber-700 dark:text-amber-400"
+                : ""
+            }`}
+            aria-hidden="true"
+          />
           <div className="space-y-0.5 min-w-0 flex-1">
-            <p className="font-semibold text-xs sm:text-sm">Unable to place order</p>
-            <p className="leading-relaxed text-[11px] sm:text-xs text-destructive/90 break-words">{submitError}</p>
+            <p className="font-semibold text-xs sm:text-sm">
+              {submitErrorCode === "PREVIEW_READ_ONLY"
+                ? "Demonstration Preview"
+                : "Unable to place order"}
+            </p>
+            <p
+              className={`leading-relaxed text-[11px] sm:text-xs break-words ${
+                submitErrorCode === "PREVIEW_READ_ONLY"
+                  ? "text-amber-900/90 dark:text-amber-300/90"
+                  : "text-destructive/90"
+              }`}
+            >
+              {submitError}
+            </p>
           </div>
         </div>
       )}
@@ -364,12 +401,14 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
             )
           );
           setSubmitError(null);
+          setSubmitErrorCode(null);
         }}
         onRemoveUnavailable={() => {
           removeItems(
             cartIssues.flatMap((issue) => (issue.kind === "UNAVAILABLE" ? [issue.itemKey] : []))
           );
           setSubmitError(null);
+          setSubmitErrorCode(null);
         }}
       />
 
@@ -388,12 +427,13 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
               {pickupSlotNotice ??
                 "You must select an available pickup date and time slot before your order can be placed."}
             </p>
-            <Link
-              href="/cart"
-              className="inline-flex min-touch-target h-12 items-center justify-center rounded-sm bg-caramel px-4 text-xs font-semibold text-white transition-colors hover:bg-caramel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel"
+            <button
+              type="button"
+              onClick={() => setIsChangeSlotOpen(true)}
+              className="inline-flex min-touch-target h-12 items-center justify-center rounded-sm bg-caramel px-4 text-xs font-semibold text-white transition-colors hover:bg-caramel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel cursor-pointer"
             >
-              Choose Pickup Slot in Cart →
-            </Link>
+              Choose Pickup Slot →
+            </button>
           </div>
         </div>
       )}
@@ -415,13 +455,14 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
               pickupDate={pickupDate}
               pickupSlot={pickupSlot}
               hoursLabel={hoursLabel}
+              onOpenChangeSlot={() => setIsChangeSlotOpen(true)}
             />
 
             {/* Payment Method Notice */}
             <PaymentMethodNote />
 
             {/* Action Buttons */}
-            <div className="rounded-sm border border-border bg-card p-4 sm:p-6 space-y-4">
+            <div className="rounded-sm border border-border bg-card p-4 sm:p-6 space-y-4 [contain:content]">
               {/* Mobile total preview (visible only on small screens < lg) */}
               <div className="lg:hidden flex items-center justify-between border-b border-border pb-3">
                 <div>
@@ -493,6 +534,21 @@ export function CheckoutForm({ hoursLabel }: { hoursLabel?: string | null }) {
           </div>
         </div>
       </form>
+
+      {/* In-place Change Pickup Slot Dialog */}
+      {isChangeSlotOpen && (
+        <CheckoutChangeSlotModal
+          isOpen={isChangeSlotOpen}
+          onClose={() => setIsChangeSlotOpen(false)}
+          currentDate={pickupDate}
+          currentSlot={pickupSlot}
+          maxLeadMinutes={maxLeadMinutes}
+          onConfirm={(newDate, newSlot) => {
+            setPickupDate(newDate);
+            setPickupSlot(newSlot);
+          }}
+        />
+      )}
     </div>
   );
 }

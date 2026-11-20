@@ -11,7 +11,7 @@ import {
 import type { PlaceOrderResult, ValidateCartResult, CartItemStatus } from "./types";
 import { mapCartRpcError } from "./cart-errors";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limiter";
-import { assertNotPreview } from "@/lib/security/preview-guard";
+import { assertNotPreview, PreviewReadOnlyError } from "@/lib/security/preview-guard";
 
 const DEFAULT_LOCATION_SLUG = "namma-bakery-rr-nagar";
 
@@ -302,6 +302,18 @@ export async function placeOrderAction(input: unknown): Promise<PlaceOrderResult
       replayed,
     };
   } catch (err) {
+    if (
+      err instanceof PreviewReadOnlyError ||
+      (err instanceof Error && err.name === "PreviewReadOnlyError")
+    ) {
+      return {
+        success: false,
+        code: "PREVIEW_READ_ONLY",
+        error:
+          "Online ordering is disabled in this demonstration preview deployment. Please test order placement in a local or production environment.",
+      };
+    }
+
     // Avoid logging sensitive client PII
     console.error("[placeOrderAction] Unexpected server exception:", {
       message: err instanceof Error ? err.message : "Unknown error",

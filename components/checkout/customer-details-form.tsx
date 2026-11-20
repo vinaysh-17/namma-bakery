@@ -16,7 +16,7 @@ export function CustomerDetailsForm({
   const notesLength = values.customerNotes.length;
 
   return (
-    <div className="rounded-sm border border-border bg-card p-5 sm:p-6 space-y-5">
+    <div className="rounded-sm border border-border bg-card p-5 sm:p-6 space-y-5 [contain:content]">
       <div className="flex items-center gap-2 border-b border-border pb-3">
         <User className="h-5 w-5 text-caramel" aria-hidden="true" />
         <h3 className="font-heading text-lg font-semibold text-foreground">
@@ -87,9 +87,7 @@ export function CustomerDetailsForm({
               value={values.customerPhone}
               onChange={(e) => onChange("customerPhone", e.target.value)}
               aria-invalid={Boolean(errors.customerPhone)}
-              aria-describedby={
-                errors.customerPhone ? "customerPhone-error" : "customerPhone-hint"
-              }
+              aria-describedby={errors.customerPhone ? "customerPhone-error" : undefined}
               className={`w-full min-h-[48px] rounded-sm border bg-background pl-12 pr-3.5 text-sm text-foreground transition-colors placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
                 errors.customerPhone
                   ? "border-destructive focus-visible:ring-destructive"
@@ -97,20 +95,13 @@ export function CustomerDetailsForm({
               }`}
             />
           </div>
-          {errors.customerPhone ? (
+          {errors.customerPhone && (
             <p
               id="customerPhone-error"
               role="alert"
               className="mt-1 text-xs text-destructive font-medium"
             >
               {errors.customerPhone}
-            </p>
-          ) : (
-            <p
-              id="customerPhone-hint"
-              className="mt-1 text-[11px] text-muted-foreground"
-            >
-              We use this to verify and coordinate your bakery pickup in RR Nagar.
             </p>
           )}
         </div>
@@ -135,29 +126,20 @@ export function CustomerDetailsForm({
             value={values.customerEmail}
             onChange={(e) => onChange("customerEmail", e.target.value)}
             aria-invalid={Boolean(errors.customerEmail)}
-            aria-describedby={
-              errors.customerEmail ? "customerEmail-error" : "customerEmail-hint"
-            }
+            aria-describedby={errors.customerEmail ? "customerEmail-error" : undefined}
             className={`w-full min-h-[48px] rounded-sm border bg-background px-3.5 text-sm text-foreground transition-colors placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
               errors.customerEmail
                 ? "border-destructive focus-visible:ring-destructive"
                 : "border-border hover:border-caramel/50"
             }`}
           />
-          {errors.customerEmail ? (
+          {errors.customerEmail && (
             <p
               id="customerEmail-error"
               role="alert"
               className="mt-1 text-xs text-destructive font-medium"
             >
               {errors.customerEmail}
-            </p>
-          ) : (
-            <p
-              id="customerEmail-hint"
-              className="mt-1 text-[11px] text-muted-foreground"
-            >
-              Optional: receive order confirmation and digital pickup receipt.
             </p>
           )}
         </div>
@@ -190,29 +172,20 @@ export function CustomerDetailsForm({
             value={values.customerNotes}
             onChange={(e) => onChange("customerNotes", e.target.value)}
             aria-invalid={Boolean(errors.customerNotes)}
-            aria-describedby={
-              errors.customerNotes ? "customerNotes-error" : "customerNotes-hint"
-            }
+            aria-describedby={errors.customerNotes ? "customerNotes-error" : undefined}
             className={`w-full rounded-sm border bg-background p-3 text-sm text-foreground transition-colors placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel ${
               errors.customerNotes
                 ? "border-destructive focus-visible:ring-destructive"
                 : "border-border hover:border-caramel/50"
             }`}
           />
-          {errors.customerNotes ? (
+          {errors.customerNotes && (
             <p
               id="customerNotes-error"
               role="alert"
               className="mt-1 text-xs text-destructive font-medium"
             >
               {errors.customerNotes}
-            </p>
-          ) : (
-            <p
-              id="customerNotes-hint"
-              className="mt-1 text-[11px] text-muted-foreground"
-            >
-              Let our bakers know any message for the cake or custom requests.
             </p>
           )}
         </div>
