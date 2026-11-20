@@ -23,7 +23,7 @@ import { checkItemBeforeAdd } from "@/lib/cart/add-check";
 import { formatPaise } from "@/lib/utils/money";
 import { hasMultiplePrices } from "@/lib/menu/utils";
 import { resolvePrimaryProductImage } from "@/lib/menu/product-images";
-import { useCart } from "@/lib/cart/context";
+import { useCart, MAX_QUANTITY_PER_ITEM } from "@/lib/cart/context";
 import { generateCartItemKey } from "@/lib/cart/key";
 import { cn } from "@/lib/utils";
 
@@ -181,7 +181,7 @@ function SimpleProductCard({
   const shouldPreload = Boolean(preload ?? priority);
   const resolvedLoading = shouldPreload ? undefined : loading;
   const resolvedFetchPriority = fetchPriority ?? (shouldPreload ? "high" : undefined);
-  const { addItem } = useCart();
+  const { items, isHydrated, addItem, updateQuantity, removeItem } = useCart();
   const router = useRouter();
   const categorySlug = product.category?.slug ?? "menu";
   const { url: imageUrl, alt: imageAlt } = resolvePrimaryProductImage(product);
@@ -225,7 +225,27 @@ function SimpleProductCard({
       ? `View details for ${product.name} (in-store only)`
       : `View details for ${product.name}`;
 
-  const [quantity, setQuantity] = useState<number>(0);
+  // Local mount guard (C09 pattern): ensure initial client render matches SSR HTML byte-for-byte.
+  // Context alone cannot guarantee this because CartProvider's effect may have already hydrated.
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    // Intentional: flipping this flag after mount is the purpose of the guard.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsMounted(true);
+  }, []);
+
+  const currentItemKey = generateCartItemKey({
+    productId: product.id,
+    kind: "SIMPLE",
+    variantId: activeVariant?.id,
+  });
+
+  const cartItem =
+    isMounted && isHydrated
+      ? items.find((item) => item.itemKey === currentItemKey)
+      : undefined;
+  const quantity = cartItem?.quantity ?? 0;
+
   const [justAdded, setJustAdded] = useState(false);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
   // Set when the live menu says the item can no longer be ordered (menu was open for a while)
@@ -244,17 +264,16 @@ function SimpleProductCard({
     return () => clearTimeout(timer);
   }, [warningMessage]);
 
-  // Add to Cart is enabled ONLY when the customer has explicitly selected a quantity > 0
-  const canAddToCart = canOrder && quantity > 0 && !isCheckingAdd;
+  // Add to Cart is enabled ONLY when the customer can order and has not hit max quantity
+  const canAddToCart = canOrder && quantity < MAX_QUANTITY_PER_ITEM && !isCheckingAdd;
 
-  const handleAddToCart = async () => {
-    // Defensive guard: if somehow triggered while quantity is 0, show message and do not add to cart
-    if (quantity <= 0) {
-      setWarningMessage("Add a quantity first");
+  const handleAddToCart = async (qtyToAdd = 1) => {
+    if (!canOrder || currentPricePaise === null || isCheckingAdd) {
       return;
     }
 
-    if (!canOrder || currentPricePaise === null || isCheckingAdd) {
+    if (quantity + qtyToAdd > MAX_QUANTITY_PER_ITEM) {
+      setWarningMessage(`Maximum ${MAX_QUANTITY_PER_ITEM} items allowed`);
       return;
     }
 
@@ -264,26 +283,19 @@ function SimpleProductCard({
     const blocked = await checkItemBeforeAdd({
       productId: product.id,
       variantId: activeVariant?.id,
-      quantity,
+      quantity: qtyToAdd,
       productName: product.name,
     });
     setIsCheckingAdd(false);
     if (blocked) {
       setBlockedMessage(blocked);
-      setQuantity(0);
       router.refresh(); // reload the menu so the card shows the current availability
       return;
     }
     setBlockedMessage(null);
 
-    const itemKey = generateCartItemKey({
-      productId: product.id,
-      kind: "SIMPLE",
-      variantId: activeVariant?.id,
-    });
-
     addItem({
-      itemKey,
+      itemKey: currentItemKey,
       productId: product.id,
       productSlug: product.slug,
       productName: product.name,
@@ -293,13 +305,45 @@ function SimpleProductCard({
       variantId: activeVariant?.id,
       variantLabel: activeVariant?.label,
       unitPricePaise: currentPricePaise,
-      quantity, // Exactly the explicitly selected quantity
+      quantity: qtyToAdd,
       leadTimeMinutes: product.lead_time_minutes,
     });
 
     setWarningMessage(null);
     setJustAdded(true);
-    setQuantity(0); // Reset quantity control to [ Add ] and disable Add to Cart again
+  };
+
+  const handleAddClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setWarningMessage(null);
+    if (!canOrder || currentPricePaise === null || isCheckingAdd) {
+      return;
+    }
+    await handleAddToCart(1);
+  };
+
+  const handleIncrement = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setWarningMessage(null);
+    if (!canOrder) return;
+    if (quantity >= MAX_QUANTITY_PER_ITEM) {
+      setWarningMessage(`Maximum ${MAX_QUANTITY_PER_ITEM} items allowed`);
+      return;
+    }
+    updateQuantity(currentItemKey, quantity + 1);
+  };
+
+  const handleDecrement = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setWarningMessage(null);
+    if (quantity > 1) {
+      updateQuantity(currentItemKey, quantity - 1);
+    } else if (quantity === 1) {
+      removeItem(currentItemKey);
+    }
   };
 
   return (
@@ -490,12 +534,7 @@ function SimpleProductCard({
           <button
             type="button"
             disabled={!canOrder}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setWarningMessage(null);
-              setQuantity(1);
-            }}
+            onClick={handleAddClick}
             className={cn(
               "flex h-8 min-w-[64px] sm:min-w-[70px] items-center justify-center rounded-xs border border-caramel/40 px-2.5 text-xs font-semibold text-caramel transition-colors hover:bg-caramel/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel active:scale-95",
               !canOrder &&
@@ -503,7 +542,7 @@ function SimpleProductCard({
             )}
             aria-label={canOrder ? `Select quantity for ${product.name}` : orderBlockedLabel}
           >
-            Add
+            {isCheckingAdd ? "..." : "Add"}
           </button>
         ) : (
           <div
@@ -515,11 +554,7 @@ function SimpleProductCard({
           >
             <button
               type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setQuantity((q) => Math.max(0, q - 1));
-              }}
+              onClick={handleDecrement}
               className="flex h-full w-7 items-center justify-center text-caramel hover:bg-caramel/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel rounded-l-xs"
               aria-label="Decrease quantity"
             >
@@ -530,11 +565,7 @@ function SimpleProductCard({
             </span>
             <button
               type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setQuantity((q) => Math.min(20, q + 1));
-              }}
+              onClick={handleIncrement}
               className="flex h-full w-7 items-center justify-center text-caramel hover:bg-caramel/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel rounded-r-xs"
               aria-label="Increase quantity"
             >
@@ -547,10 +578,10 @@ function SimpleProductCard({
         <div
           className="relative inline-flex"
           onClick={(e) => {
-            if (canOrder && quantity <= 0) {
+            if (canOrder && !canAddToCart && quantity >= MAX_QUANTITY_PER_ITEM) {
               e.preventDefault();
               e.stopPropagation();
-              setWarningMessage("Add a quantity first");
+              setWarningMessage(`Maximum ${MAX_QUANTITY_PER_ITEM} items allowed`);
             }
           }}
         >
@@ -560,7 +591,7 @@ function SimpleProductCard({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              handleAddToCart();
+              handleAddToCart(1);
             }}
             aria-label={
               !canOrder
@@ -570,7 +601,7 @@ function SimpleProductCard({
                 : justAdded
                 ? `Added ${quantity} of ${product.name} to cart`
                 : canAddToCart
-                ? `Add to Cart: ${quantity} of ${product.name}`
+                ? `Add to Cart: ${quantity > 0 ? quantity : 1} of ${product.name}`
                 : selectionInvalid
                 ? `Choose option for ${product.name}`
                 : `Select a quantity for ${product.name} first`

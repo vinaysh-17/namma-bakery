@@ -100,6 +100,7 @@ import {
   initialCartState,
   validateCartItems,
 } from "../lib/cart/reducer";
+import { generateCartItemKey } from "../lib/cart/key";
 import type { CartItemCheck } from "../lib/orders/types";
 import { validateCartInputSchema } from "../lib/orders/validation";
 import {
@@ -4970,6 +4971,125 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     mig0021Src.includes("create unique index if not exists orders_idempotency_key_uidx") &&
     mig0021Src.includes("where idempotency_key is not null;"),
     "Regression #98: Migration 0021 defines partial unique index for database-level order idempotency"
+  );
+
+  // --- Group F: Product Card Cart Hydration & Item Key Consistency ---
+  console.log("\n  [Group F] Product Card Cart Hydration & Item Key Consistency:");
+
+  // 45. Item key format consistency across simple products, variants, and cakes
+  const simpleKeyNoVar = generateCartItemKey({ productId: "prod-1", kind: "SIMPLE" });
+  const simpleKeyWithVar = generateCartItemKey({ productId: "prod-1", kind: "SIMPLE", variantId: "var-large" });
+  const cakeKey = generateCartItemKey({
+    productId: "cake-1",
+    kind: "TIERED_CAKE",
+    configuration: { weightGrams: 1000, eggType: "EGGLESS", finish: "STANDARD" },
+  });
+  assert(
+    simpleKeyNoVar === "simple:prod-1:default" &&
+    simpleKeyWithVar === "simple:prod-1:var-large" &&
+    cakeKey === "cake:cake-1:1000:EGGLESS:STANDARD",
+    "Regression Cart: generateCartItemKey produces deterministic keys for simple products, variants, and cakes"
+  );
+
+  // 46. Multi-product independent quantity tracking and hydration lookup
+  const initialTestCart = {
+    ...initialCartState,
+    items: [
+      {
+        itemKey: simpleKeyNoVar,
+        productId: "prod-1",
+        productSlug: "vanilla-bun",
+        productName: "Vanilla Bun",
+        categorySlug: "buns",
+        kind: "SIMPLE" as const,
+        unitPricePaise: 4000,
+        quantity: 2,
+      },
+      {
+        itemKey: simpleKeyWithVar,
+        productId: "prod-1",
+        productSlug: "vanilla-bun",
+        productName: "Vanilla Bun (Large)",
+        categorySlug: "buns",
+        kind: "SIMPLE" as const,
+        variantId: "var-large",
+        variantLabel: "Large",
+        unitPricePaise: 7000,
+        quantity: 1,
+      },
+      {
+        itemKey: "simple:prod-2:default",
+        productId: "prod-2",
+        productSlug: "veg-puff",
+        productName: "Veg Puff",
+        categorySlug: "snacks",
+        kind: "SIMPLE" as const,
+        unitPricePaise: 3000,
+        quantity: 5,
+      },
+    ],
+  };
+
+  const lookupQty = (items: CartItem[], key: string) => items.find((i) => i.itemKey === key)?.quantity ?? 0;
+
+  assert(
+    lookupQty(initialTestCart.items, simpleKeyNoVar) === 2 &&
+    lookupQty(initialTestCart.items, simpleKeyWithVar) === 1 &&
+    lookupQty(initialTestCart.items, "simple:prod-2:default") === 5 &&
+    lookupQty(initialTestCart.items, "simple:unadded:default") === 0,
+    "Regression Cart: card itemKey lookup accurately resolves independent quantities for single products, variants, and unadded items"
+  );
+
+  // 47. Isolated quantity mutation does not contaminate other items
+  const updatedCart = cartReducer(initialTestCart, {
+    type: "UPDATE_QUANTITY",
+    payload: { itemKey: simpleKeyNoVar, quantity: 4 },
+  });
+  assert(
+    lookupQty(updatedCart.items, simpleKeyNoVar) === 4 &&
+    lookupQty(updatedCart.items, simpleKeyWithVar) === 1 &&
+    lookupQty(updatedCart.items, "simple:prod-2:default") === 5,
+    "Regression Cart: updating quantity for one item updates only that item without mutating sibling variants or products"
+  );
+
+  // 48. REMOVE_ITEM clears target product while keeping other products intact
+  const removedCart = cartReducer(updatedCart, {
+    type: "REMOVE_ITEM",
+    payload: { itemKey: simpleKeyWithVar },
+  });
+  assert(
+    lookupQty(removedCart.items, simpleKeyWithVar) === 0 &&
+    lookupQty(removedCart.items, simpleKeyNoVar) === 4 &&
+    lookupQty(removedCart.items, "simple:prod-2:default") === 5,
+    "Regression Cart: removing one product line clears its quantity to 0 while preserving other items"
+  );
+
+  // 49. Product card C09 mount guard and SSR safety contract
+  const productCardSrc = fs.readFileSync(path.join(process.cwd(), "components/menu/product-card.tsx"), "utf8");
+  assert(
+    productCardSrc.includes("const [isMounted, setIsMounted] = useState(false);") &&
+    productCardSrc.includes("setIsMounted(true);") &&
+    productCardSrc.includes("isMounted && isHydrated") &&
+    productCardSrc.includes("items.find((item) => item.itemKey === currentItemKey)"),
+    "Regression Cart: SimpleProductCard implements C09 mount guard ensuring initial SSR render evaluates quantity = 0"
+  );
+
+  // 50. Product card identity consistency across lookup, add, increment, decrement, and remove
+  assert(
+    productCardSrc.includes("itemKey: currentItemKey,") &&
+    productCardSrc.includes("updateQuantity(currentItemKey, quantity + 1)") &&
+    productCardSrc.includes("updateQuantity(currentItemKey, quantity - 1)") &&
+    productCardSrc.includes("removeItem(currentItemKey)"),
+    "Regression Cart: SimpleProductCard uses identical currentItemKey for lookup, addItem, updateQuantity, and removeItem"
+  );
+
+  // 51. Product card MAX_QUANTITY_PER_ITEM cap enforcement
+  assert(
+    productCardSrc.includes("MAX_QUANTITY_PER_ITEM") &&
+    productCardSrc.includes("canOrder && quantity < MAX_QUANTITY_PER_ITEM && !isCheckingAdd") &&
+    productCardSrc.includes("quantity >= MAX_QUANTITY_PER_ITEM") &&
+    productCardSrc.includes("Maximum ${MAX_QUANTITY_PER_ITEM} items allowed"),
+    "Regression Cart: SimpleProductCard strictly enforces MAX_QUANTITY_PER_ITEM (20) across Add and Increment controls"
   );
 
   console.log("\n========================================================");
