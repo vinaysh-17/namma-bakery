@@ -190,14 +190,38 @@ export function toIstLocalInputValue(input: Date | string | number): string {
 }
 
 /**
- * Parses a "YYYY-MM-DDTHH:mm" <input type="datetime-local"> value as IST wall-clock time
- * (matching how toIstLocalInputValue produced it), not the browser/device's local timezone
- * (GitHub issue #84). Asia/Kolkata has no daylight-saving transitions, so the +05:30 offset
- * is always correct, matching the same technique used elsewhere in this codebase (e.g.
- * lib/custom-cake/actions.ts's buildIstPickupIso).
+ * Parses a "YYYY-MM-DDTHH:mm" (or "YYYY-MM-DDTHH:mm:ss") <input type="datetime-local"> value
+ * as an IST wall-clock time, returning a Date representing that exact instant in UTC.
+ *
+ * Validates strict calendar dates (rejects February 30, non-leap year Feb 29, out-of-range
+ * hours/minutes) without silently rolling over to another date (GitHub issue #84).
  */
 export function parseIstLocalInputValue(value: string): Date {
-  return new Date(`${value}:00+05:30`);
+  if (!value || typeof value !== "string") return new Date(NaN);
+  const trimmed = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+  if (!match) return new Date(NaN);
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = match[6] ? Number(match[6]) : 0;
+
+  if (hour > 23 || minute > 59 || second > 59) return new Date(NaN);
+
+  const utcCheck = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utcCheck.getUTCFullYear() !== year ||
+    utcCheck.getUTCMonth() !== month - 1 ||
+    utcCheck.getUTCDate() !== day
+  ) {
+    return new Date(NaN);
+  }
+
+  const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second) - istOffsetMs);
 }
 
 /**

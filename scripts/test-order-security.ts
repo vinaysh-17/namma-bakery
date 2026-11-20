@@ -4553,6 +4553,425 @@ function createMockPickupClient(opts: MockPickupOptions): PickupSupabaseClient {
     "Security DB: pgTAP test 017 (security hardening) exists"
   );
 
+  // ============================================================================
+  // --- Section 29: Automated Regression Hardening (9 GitHub Issues) ---
+  // ============================================================================
+  console.log("\n--- Section 29: Regression Hardening (9 GitHub Issues) ---");
+
+  // --- Group A: Issue #80 (Staff Dashboard Date Rollover) ---
+  console.log("\n  [Group A / #80] Staff Dashboard Date Rollover Edge Cases:");
+  // 1. Midnight IST transition (yesterday -> today)
+  const rolloverMidnight = resolveDateRollover({
+    previousToday: "2026-11-19",
+    currentToday: "2026-11-20",
+    followingOrdersToday: true,
+    followingCustomCakesToday: true,
+    selectedOrderId: "order-1",
+    selectedCustomCakeId: "cake-1",
+    orders: [{ id: "order-1", requested_pickup_at: "2026-11-20T04:30:00Z", confirmed_pickup_at: null }],
+    customCakeRequests: [{ id: "cake-1", created_at: "2026-11-20T04:30:00Z" }],
+  });
+  assert(
+    rolloverMidnight !== null &&
+    rolloverMidnight.todayIst === "2026-11-20" &&
+    rolloverMidnight.orders?.selectedDate === "2026-11-20" &&
+    rolloverMidnight.orders?.selectedOrderId === "order-1" &&
+    rolloverMidnight.shouldRefresh === true,
+    "Regression #80: Midnight IST transition advances date and refreshes data"
+  );
+
+  // 2. Month-end transition (Feb 28 -> Mar 1 in non-leap year 2026)
+  const rolloverMonthEnd = resolveDateRollover({
+    previousToday: "2026-02-28",
+    currentToday: "2026-03-01",
+    followingOrdersToday: true,
+    followingCustomCakesToday: false,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: [],
+    customCakeRequests: [],
+  });
+  assert(
+    rolloverMonthEnd !== null && rolloverMonthEnd.todayIst === "2026-03-01" && rolloverMonthEnd.orders?.selectedDate === "2026-03-01",
+    "Regression #80: Month-end boundary transition (Feb 28 -> Mar 1) succeeds"
+  );
+
+  // 3. Year-end transition (Dec 31 -> Jan 1)
+  const rolloverYearEnd = resolveDateRollover({
+    previousToday: "2026-12-31",
+    currentToday: "2027-01-01",
+    followingOrdersToday: true,
+    followingCustomCakesToday: true,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: [],
+    customCakeRequests: [],
+  });
+  assert(
+    rolloverYearEnd !== null && rolloverYearEnd.todayIst === "2027-01-01" && rolloverYearEnd.orders?.selectedDate === "2027-01-01",
+    "Regression #80: Year-end boundary transition (Dec 31 -> Jan 1) succeeds"
+  );
+
+  // 4. Leap-year boundary (Feb 28 -> Feb 29 in leap year 2028)
+  const rolloverLeapDay = resolveDateRollover({
+    previousToday: "2028-02-28",
+    currentToday: "2028-02-29",
+    followingOrdersToday: true,
+    followingCustomCakesToday: false,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: [],
+    customCakeRequests: [],
+  });
+  assert(
+    rolloverLeapDay !== null && rolloverLeapDay.todayIst === "2028-02-29",
+    "Regression #80: Leap-year day transition (Feb 28 -> Feb 29) succeeds"
+  );
+
+  // 5. User pinned date (followingOrdersToday: false) is never forced to advance
+  const rolloverPinned = resolveDateRollover({
+    previousToday: "2026-11-19",
+    currentToday: "2026-11-20",
+    followingOrdersToday: false,
+    followingCustomCakesToday: false,
+    selectedOrderId: "pinned-order",
+    selectedCustomCakeId: null,
+    orders: [{ id: "pinned-order", requested_pickup_at: "2026-11-15T10:00:00Z", confirmed_pickup_at: null }],
+    customCakeRequests: [],
+  });
+  assert(
+    rolloverPinned !== null && rolloverPinned.orders === null && rolloverPinned.shouldRefresh === false,
+    "Regression #80: User-pinned date view is preserved on rollover and does not auto-advance"
+  );
+
+  // 6. Multiple periodic checks when date has not changed return null (no-op)
+  const rolloverNoop = resolveDateRollover({
+    previousToday: "2026-11-20",
+    currentToday: "2026-11-20",
+    followingOrdersToday: true,
+    followingCustomCakesToday: true,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: [],
+    customCakeRequests: [],
+  });
+  assert(rolloverNoop === null, "Regression #80: Periodic check with unchanged date returns null (no redundant state updates)");
+
+  // 7. Malformed / empty input values return null safely
+  const rolloverMalformed = resolveDateRollover({
+    previousToday: "",
+    currentToday: "2026-11-20",
+    followingOrdersToday: true,
+    followingCustomCakesToday: true,
+    selectedOrderId: null,
+    selectedCustomCakeId: null,
+    orders: [],
+    customCakeRequests: [],
+  });
+  assert(rolloverMalformed === null, "Regression #80: Malformed/empty date input safely returns null without throwing");
+
+  // 8. Source contracts: staff dashboard cleanup and visibility listener
+  const staffDashboardCode = fs.readFileSync(path.join(process.cwd(), "components/staff/staff-dashboard.tsx"), "utf8");
+  assert(
+    staffDashboardCode.includes('document.addEventListener("visibilitychange",') &&
+    staffDashboardCode.includes('window.addEventListener("focus",') &&
+    staffDashboardCode.includes("clearInterval(intervalId)"),
+    "Regression #80: StaffDashboard attaches and properly cleans up visibilitychange, focus, and interval timers"
+  );
+
+  // --- Group A: Issue #84 (IST Date/Time Handling) ---
+  console.log("\n  [Group A / #84] IST Date/Time Edge Cases:");
+  // 9. Standard 16-character datetime-local value
+  const istParsed16 = parseIstLocalInputValue("2026-11-20T10:30");
+  assert(
+    istParsed16.toISOString() === "2026-11-20T05:00:00.000Z",
+    "Regression #84: parseIstLocalInputValue correctly interprets YYYY-MM-DDTHH:mm as IST (+05:30 -> UTC)"
+  );
+
+  // 10. 19-character datetime-local value with seconds
+  const istParsed19 = parseIstLocalInputValue("2026-11-20T10:30:00");
+  assert(
+    istParsed19.toISOString() === "2026-11-20T05:00:00.000Z",
+    "Regression #84: parseIstLocalInputValue correctly accepts 19-char datetime string with seconds without creating Invalid Date"
+  );
+
+  // 11. Datetime-local value with leading/trailing whitespace
+  const istParsedTrimmed = parseIstLocalInputValue("  2026-11-20T10:30  ");
+  assert(
+    istParsedTrimmed.toISOString() === "2026-11-20T05:00:00.000Z",
+    "Regression #84: parseIstLocalInputValue trims whitespace robustly"
+  );
+
+  // 12. Invalid, malformed, or impossible datetime-local values (strict calendar enforcement)
+  assert(
+    Number.isNaN(parseIstLocalInputValue("").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("invalid-date").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026-02-30T10:30").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026-02-29T10:30").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026-04-31T10:30").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026-11-20T25:00").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026/11/20 10:30").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue("2026-11-20T10:30Z").getTime()) &&
+    Number.isNaN(parseIstLocalInputValue(null as unknown as string).getTime()) &&
+    parseIstLocalInputValue("2028-02-29T10:30").toISOString() === "2028-02-29T05:00:00.000Z",
+    "Regression #84: parseIstLocalInputValue strictly rejects impossible calendar dates, out-of-range times, and timezone suffixes without silent rollover"
+  );
+
+  // 13. Round-trip conversion between toIstLocalInputValue and parseIstLocalInputValue
+  const originalIso = "2026-11-20T05:00:00.000Z";
+  const formattedInputVal = toIstLocalInputValue(originalIso);
+  const roundTrippedDate = parseIstLocalInputValue(formattedInputVal);
+  assert(
+    formattedInputVal === "2026-11-20T10:30" && roundTrippedDate.toISOString() === originalIso,
+    "Regression #84: Round-trip conversion between toIstLocalInputValue and parseIstLocalInputValue is lossless"
+  );
+
+  // 14. Month boundary in toIstLocalInputValue (UTC 28 Feb 20:00 -> IST 1 Mar 01:30)
+  assert(
+    toIstLocalInputValue("2026-02-28T20:00:00.000Z") === "2026-03-01T01:30",
+    "Regression #84: toIstLocalInputValue correctly handles month-end rollover in IST"
+  );
+
+  // 15. Source contract: staff-custom-cake-modal does not use un-timezoned local Date getters
+  const staffModalSrc = fs.readFileSync(path.join(process.cwd(), "components/staff/staff-custom-cake-modal.tsx"), "utf8");
+  assert(
+    !/\.getHours\(\)|\.getMinutes\(\)|\.getDate\(\)|\.getMonth\(\)/.test(staffModalSrc),
+    "Regression #84: staff-custom-cake-modal does not use device-local Date getters"
+  );
+
+  // --- Group A: Issue #87 (Business-Hours Unarchive) ---
+  console.log("\n  [Group A / #87] Business-Hours Unarchive Edge Cases:");
+  const adminActionsCode = fs.readFileSync(path.join(process.cwd(), "lib/admin/actions.ts"), "utf8");
+  // 16. Queries correct audit table and fields
+  assert(
+    adminActionsCode.includes('.from("audit_logs")') &&
+    adminActionsCode.includes('.eq("entity_type", "business_hours")') &&
+    adminActionsCode.includes('.order("created_at", { ascending: false })'),
+    "Regression #87: unarchiveBusinessHourAction queries audit_logs ordered by created_at desc"
+  );
+
+  // 17. Safe fallback to default hours when audit logs are missing or empty
+  assert(
+    adminActionsCode.includes('const finalOpens = restoreOpens') &&
+    adminActionsCode.includes(': "10:00:00"') &&
+    adminActionsCode.includes(': "21:30:00"'),
+    "Regression #87: unarchiveBusinessHourAction provides safe 10:00–21:30 fallback when audit entry is absent"
+  );
+
+  // 18. Normalizes 5-char "HH:mm" to 8-char "HH:mm:ss"
+  assert(
+    adminActionsCode.includes('restoreOpens.length === 5 ? `${restoreOpens}:00` : restoreOpens'),
+    "Regression #87: unarchiveBusinessHourAction normalizes 5-char time strings to PostgreSQL time format"
+  );
+
+  // --- Group B: Issue #97 (Pickup Slots Duration & Badges) ---
+  console.log("\n  [Group B / #97] Pickup Slots Duration & Badge Edge Cases:");
+  // 19. 15-minute slot formatting
+  assert(
+    formatPickupSlot("2026-11-20T04:30:00.000Z", 15) === "10:00 AM – 10:15 AM",
+    "Regression #97: formatPickupSlot correctly formats 15-minute slot durations in IST"
+  );
+
+  // 20. 30-minute slot formatting
+  assert(
+    formatPickupSlot("2026-11-20T04:30:00.000Z", 30) === "10:00 AM – 10:30 AM",
+    "Regression #97: formatPickupSlot correctly formats 30-minute slot durations in IST"
+  );
+
+  // 21. 60-minute slot formatting
+  assert(
+    formatPickupSlot("2026-11-20T04:30:00.000Z", 60) === "10:00 AM – 11:00 AM",
+    "Regression #97: formatPickupSlot correctly formats 60-minute slot durations in IST"
+  );
+
+  // 22. Badge mapping: Full, Passed, Unavailable (and never Prep)
+  assert(
+    getSlotBadgeLabel("Slot is full") === "Full" &&
+    getSlotBadgeLabel("Slot passed") === "Passed" &&
+    getSlotBadgeLabel(undefined) === "Unavailable" &&
+    getSlotBadgeLabel("any other") === "Unavailable" &&
+    getSlotBadgeLabel("Prep") !== "Prep",
+    "Regression #97: getSlotBadgeLabel maps reasons to 'Full'/'Passed'/'Unavailable' and never emits 'Prep'"
+  );
+
+  // 23. Source contract: getAvailablePickupSlots validates against VALID_SLOT_MINUTES
+  const pickupQueriesSrc = fs.readFileSync(path.join(process.cwd(), "lib/pickup/queries.ts"), "utf8");
+  assert(
+    pickupQueriesSrc.includes("VALID_SLOT_MINUTES = [15, 30, 60]") &&
+    pickupQueriesSrc.includes('error: "INVALID_SLOT_DURATION"'),
+    "Regression #97: getAvailablePickupSlots enforces 15, 30, 60 min durations and fails closed on invalid config"
+  );
+
+  // --- Group B: Issue #74 (Paused Ordering Storefront Visibility) ---
+  console.log("\n  [Group B / #74] Paused Ordering Storefront Visibility:");
+  // 24. Past pause is unpaused via getStoreStatus
+  const pastPauseStatus = await getStoreStatus(createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 30, orders_paused_until: "2020-01-01T00:00:00Z", pause_message: "Old pause" }, error: null },
+  }));
+  assert(pastPauseStatus.isPaused === false, "Regression #74: Expired pause timestamp is evaluated as unpaused (isPaused: false)");
+
+  // 25. Future pause is active via getStoreStatus
+  const futurePauseStatus = await getStoreStatus(createMockPickupClient({
+    storeStatus: { data: { slot_minutes: 30, orders_paused_until: "2099-01-01T00:00:00Z", pause_message: "Emergency maintenance" }, error: null },
+  }));
+  assert(futurePauseStatus.isPaused === true && futurePauseStatus.pauseMessage === "Emergency maintenance", "Regression #74: Future pause timestamp is evaluated as active (isPaused: true)");
+
+  // 26. Source contracts: cart, checkout, pickup, and custom cake render OrderingPausedBanner
+  const cartSrc = fs.readFileSync(path.join(process.cwd(), "components/cart/cart-view.tsx"), "utf8");
+  const checkoutSrc2 = fs.readFileSync(path.join(process.cwd(), "components/checkout/checkout-form.tsx"), "utf8");
+  const pickupSelectorSrc = fs.readFileSync(path.join(process.cwd(), "components/pickup/pickup-selector.tsx"), "utf8");
+  const customCakeSrc = fs.readFileSync(path.join(process.cwd(), "components/custom-cake/custom-cake-form.tsx"), "utf8");
+  assert(
+    cartSrc.includes("useOrderingPausedStatus") && cartSrc.includes("Online Ordering Paused"),
+    "Regression #74: Cart view reflects paused ordering status and locks checkout transition"
+  );
+  assert(
+    checkoutSrc2.includes("<OrderingPausedBanner status={pausedStatus}") &&
+    pickupSelectorSrc.includes("<OrderingPausedBanner status={pausedStatus}") &&
+    customCakeSrc.includes("<OrderingPausedBanner status={pausedStatus}"),
+    "Regression #74: Checkout, pickup selector, and custom cake forms render OrderingPausedBanner"
+  );
+
+  // 27. Catalog product browsing remains unobstructed
+  const menuCardSrc = fs.readFileSync(path.join(process.cwd(), "components/menu/product-card.tsx"), "utf8");
+  assert(
+    !menuCardSrc.includes("useOrderingPausedStatus"),
+    "Regression #74: Product catalog cards remain browsable without blocking when ordering is paused"
+  );
+
+  // --- Group C: Issue #104 (Dashboard Clean Hydration) ---
+  console.log("\n  [Group C / #104] Dashboard Hydration Edge Cases:");
+  // 28. Null lastSeen (server snapshot) never renders unread dot
+  assert(
+    hasUnreadCustomCakes({ activeTab: "ORDERS", lastSeen: null, requests: [{ created_at: new Date().toISOString() }] }) === false,
+    "Regression #104: Server / pre-hydration render with lastSeen=null never renders unread dot (zero hydration mismatch)"
+  );
+
+  // 29. Viewing CUSTOM_CAKES tab suppresses unread dot
+  assert(
+    hasUnreadCustomCakes({ activeTab: "CUSTOM_CAKES", lastSeen: 1000, requests: [{ created_at: new Date().toISOString() }] }) === false,
+    "Regression #104: Active CUSTOM_CAKES tab suppresses the unread badge"
+  );
+
+  // 30. Seed value initialization logic
+  assert(
+    resolveInitialLastSeen(undefined, 5000) === 5000 &&
+    resolveInitialLastSeen("invalid-timestamp", 5000) === 5000 &&
+    resolveInitialLastSeen("2026-11-20T00:00:00Z", 5000) === new Date("2026-11-20T00:00:00Z").getTime(),
+    "Regression #104: resolveInitialLastSeen safely falls back to nowMs on missing/invalid timestamps"
+  );
+
+  // 31. writeLastSeen hardening against NaN and negative values
+  writeLastSeen("test-edge-nan", NaN);
+  writeLastSeen("test-edge-neg", -100);
+  assert(
+    readLastSeen("test-edge-nan") === null && readLastSeen("test-edge-neg") === null,
+    "Regression #104: writeLastSeen rejects NaN and negative values without corrupting store"
+  );
+
+  // --- Group C: Issue #100 (Custom Cake Notification Suppression) ---
+  console.log("\n  [Group C / #100] Notification Suppression Edge Cases:");
+  // 32. Migration 0028 file inspection
+  const mig0028Src = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0028_suppress_custom_cake_order_notification.sql"), "utf8");
+  assert(
+    mig0028Src.includes("if new.custom_request_id is not null then") &&
+    mig0028Src.includes("return new;"),
+    "Regression #100: Migration 0028 suppresses NEW_ORDER trigger when custom_request_id is present"
+  );
+
+  // 33. Source contracts in staff-actions
+  const staffActionsCode = fs.readFileSync(path.join(process.cwd(), "lib/custom-cake/staff-actions.ts"), "utf8");
+  assert(
+    staffActionsCode.includes("notifyStaffChanged()") && staffActionsCode.includes("notifyCustomRequestChanged(requestId)"),
+    "Regression #100: Staff actions notify portal via dedicated pings without relying on redundant order triggers"
+  );
+
+  // --- Group D: Issue #83 (Photo Upload Accessibility) ---
+  console.log("\n  [Group D / #83] Photo Upload Accessibility Edge Cases:");
+  // 34. Label and hidden input accessibility link
+  assert(
+    customCakeSrc.includes('htmlFor="reference-image-input"') &&
+    customCakeSrc.includes('id="reference-image-input"') &&
+    customCakeSrc.includes('className="sr-only"') &&
+    !customCakeSrc.includes('type="file"\n            className="hidden"'),
+    "Regression #83: Custom cake form connects label to file input and keeps input in accessibility tree (sr-only, not hidden)"
+  );
+
+  // 35. Dropzone keyboard accessibility & Enter/Space activation with e.preventDefault()
+  assert(
+    customCakeSrc.includes('role="button"') &&
+    customCakeSrc.includes('tabIndex={0}') &&
+    customCakeSrc.includes('e.key === "Enter" || e.key === " "') &&
+    customCakeSrc.includes("e.preventDefault()"),
+    "Regression #83: Dropzone has role='button', tabIndex=0, keyboard handler with preventDefault to prevent form submit"
+  );
+
+  // 36. Visible focus indicators
+  assert(
+    customCakeSrc.includes("focus:ring-2") && customCakeSrc.includes("focus:ring-caramel"),
+    "Regression #83: Dropzone includes explicit visible focus styling (focus:ring-2)"
+  );
+
+  // 37. Accessible remove button
+  assert(
+    customCakeSrc.includes('aria-label="Remove reference photo"'),
+    "Regression #83: Remove photo button carries explicit accessible aria-label"
+  );
+
+  // 38. Object URL cleanup on change, remove and unmount
+  assert(
+    customCakeSrc.includes("URL.revokeObjectURL(previewUrl)"),
+    "Regression #83: Object URLs are cleaned up via URL.revokeObjectURL on remove and unmount"
+  );
+
+  // --- Group E: Issue #98 (Order Idempotency) ---
+  console.log("\n  [Group E / #98] Order Idempotency Edge Cases:");
+  // 39. Key format validation
+  const key1 = createIdempotencyKey();
+  const key2 = createIdempotencyKey();
+  assert(
+    IDEMPOTENCY_KEY_PATTERN.test(key1) && IDEMPOTENCY_KEY_PATTERN.test(key2) && key1 !== key2,
+    "Regression #98: createIdempotencyKey generates unique keys matching database constraints"
+  );
+
+  // 40. Synchronous double-click protection via inFlightRef
+  assert(
+    checkoutSrc2.includes("if (isSubmitting || inFlightRef.current) return;") &&
+    checkoutSrc2.includes("inFlightRef.current = true;"),
+    "Regression #98: CheckoutForm locks inFlightRef synchronously on first click to prevent rapid double-clicks"
+  );
+
+  // 41. Retry preserves key on network error
+  assert(
+    checkoutSrc2.includes("catch (err) {") &&
+    checkoutSrc2.includes("inFlightRef.current = false;") &&
+    !/catch \(err\) \{[^}]*attemptRef\.current = null/.test(checkoutSrc2),
+    "Regression #98: CheckoutForm catch block preserves attemptRef.current across network errors for safe retry"
+  );
+
+  // 42. Server refusal clears key for next attempt
+  assert(
+    checkoutSrc2.includes("if (!actionResult.success) {") &&
+    checkoutSrc2.includes("attemptRef.current = null;"),
+    "Regression #98: Definite server refusal clears attemptRef.current to start a fresh attempt with a new key"
+  );
+
+  // 43. Server action suppresses duplicate staff notification on replay
+  const ordersActionsSrc = fs.readFileSync(path.join(process.cwd(), "lib/orders/actions.ts"), "utf8").replace(/\r\n/g, "\n");
+  assert(
+    ordersActionsSrc.includes("const replayed = row.replayed === true;") &&
+    ordersActionsSrc.includes("if (!replayed) {\n      await notifyStaffChanged();\n    }"),
+    "Regression #98: placeOrderAction skips staff notification when an order is replayed via idempotency key"
+  );
+
+  // 44. Database unique partial index in migration 0021
+  const mig0021Src = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/0021_order_idempotency.sql"), "utf8");
+  assert(
+    mig0021Src.includes("create unique index if not exists orders_idempotency_key_uidx") &&
+    mig0021Src.includes("where idempotency_key is not null;"),
+    "Regression #98: Migration 0021 defines partial unique index for database-level order idempotency"
+  );
+
   console.log("\n========================================================");
   console.log(`TEST SUMMARY: ${passedCount} PASSED, ${failedCount} FAILED`);
   console.log("========================================================\n");

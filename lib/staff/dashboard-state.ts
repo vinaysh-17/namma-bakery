@@ -34,7 +34,7 @@ export interface DateRolloverResult {
 export function resolveDateRollover(
   input: DateRolloverInput
 ): DateRolloverResult | null {
-  if (input.previousToday === input.currentToday) return null;
+  if (!input.currentToday || !input.previousToday || input.previousToday === input.currentToday) return null;
 
   const today = input.currentToday;
   let droppedSelection = false;

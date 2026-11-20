@@ -11,7 +11,6 @@ function getStorage(): Storage | null {
     return null;
   }
 }
-
 function readStored(key: string): number | null {
   const storage = getStorage();
   if (!storage) return null;
@@ -33,6 +32,7 @@ export function readLastSeen(key: string): number | null {
 }
 
 export function writeLastSeen(key: string, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) return;
   const next = Math.max(value, readLastSeen(key) ?? 0);
   memory.set(key, next);
   try {
