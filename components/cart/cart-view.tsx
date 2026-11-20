@@ -109,13 +109,10 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
         {/* Cart Items List & Pickup Selection */}
         <div className="lg:col-span-8 space-y-8">
           <div className="rounded-sm border border-border bg-card overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-6 sm:py-5">
+            <div className="border-b border-border px-5 py-4 sm:px-6 sm:py-5">
               <h2 className="font-heading text-lg font-semibold text-foreground">
                 Items in your order
               </h2>
-              <span className="text-xs font-medium text-muted-foreground">
-                {itemCount} {itemCount === 1 ? "item" : "items"}
-              </span>
             </div>
             <ul className="divide-y divide-border">
               {items.map((item) => {
@@ -229,10 +226,10 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
             <PickupSelector hoursLabel={hoursLabel} />
           </div>
 
-          <div>
+          <div className="flex justify-end pt-1">
             <Link
               href="/menu"
-              className="inline-flex min-h-[48px] items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel"
+              className="inline-flex min-h-[48px] items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-caramel focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-caramel text-right"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               <span>Continue shopping to add more treats</span>
@@ -337,7 +334,7 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
           <div className="mb-2 flex items-center justify-between text-xs">
             <div className="flex items-baseline gap-1.5">
               <span className="font-medium text-muted-foreground">
-                Total ({itemCount} {itemCount === 1 ? "item" : "items"}):
+                Total:
               </span>
               <span className="font-heading text-base font-bold text-foreground">
                 {formatPaise(subtotalPaise)}

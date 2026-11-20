@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle2, Clock, MapPin, Store } from "lucide-react";
+import { CheckCircle2, Store } from "lucide-react";
 import { useCart } from "@/lib/cart/context";
 import { getAvailablePickupSlots } from "@/lib/pickup/queries";
 import type { PickupSlot } from "@/lib/pickup/types";
@@ -14,6 +14,7 @@ import { PickupSlotPicker } from "./pickup-slot-picker";
 import { PickupSlotNotice } from "./pickup-slot-notice";
 
 export function PickupSelector({ hoursLabel }: { hoursLabel?: string | null } = {}) {
+  void hoursLabel;
   const {
     items,
     pickupDate,
@@ -113,40 +114,14 @@ export function PickupSelector({ hoursLabel }: { hoursLabel?: string | null } = 
       {/* Header */}
       <div className="border-b border-border pb-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <span className="font-kannada text-xs font-medium text-caramel">
-              ಬೇಕರಿ ಕೌಂಟರ್ ಪಿಕಪ್
-            </span>
-            <h2 className="font-heading text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-              Select Pickup Date &amp; Time
-            </h2>
-          </div>
+          <h2 className="font-heading text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+            Select Pickup Date &amp; Time
+          </h2>
           <div className="inline-flex items-center gap-1.5 rounded-xs border border-border bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground">
             <Store className="h-3.5 w-3.5 text-caramel" />
             <span>Counter Pickup Only</span>
           </div>
         </div>
-
-        {/* Store pickup counter note */}
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <MapPin className="h-3.5 w-3.5 text-caramel shrink-0" />
-            <span>BEML Layout 3rd Stage, RR Nagar</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5 text-caramel shrink-0" />
-            <span>{hoursLabel ? `Counter Hours: ${hoursLabel}` : "Counter Pickup"}</span>
-          </span>
-        </div>
-
-        {/* Lead time notice if applicable */}
-        {maxLeadMinutes >= 60 && (
-          <div className="mt-3 rounded-sm border border-border/80 bg-secondary/40 p-2.5 text-xs text-foreground">
-            <span className="font-semibold text-caramel">Fresh Preparation Lead Time:</span>{" "}
-            Cakes or custom bakes in your cart require {Math.round(maxLeadMinutes / 60)} hours
-            kitchen prep. Available time slots reflect this lead time.
-          </div>
-        )}
       </div>
 
       {/* Online ordering paused by the bakery (#74) */}
