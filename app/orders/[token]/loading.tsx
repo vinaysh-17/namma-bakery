@@ -4,9 +4,9 @@ export default function OrderTrackingLoading() {
       <div className="h-4 w-32 rounded bg-muted/60" />
 
       {/* Hero Card Skeleton */}
-      <div className="rounded-sm border border-border bg-card p-6 sm:p-8 space-y-4">
-        <div className="h-6 w-48 rounded bg-muted/70" />
-        <div className="h-4 w-72 rounded bg-muted/50" />
+      <div className="rounded-sm border border-border bg-card p-4 sm:p-8 space-y-4">
+        <div className="h-6 w-full max-w-xs rounded bg-muted/70" />
+        <div className="h-4 w-full max-w-sm rounded bg-muted/50" />
         <div className="h-10 w-full rounded bg-muted/40" />
       </div>
 

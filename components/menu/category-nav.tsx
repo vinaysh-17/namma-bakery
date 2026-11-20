@@ -29,7 +29,7 @@ export function CategoryNav({ categories, activeSlug, className }: CategoryNavPr
   return (
     <div
       className={cn(
-        "sticky top-16 z-30 w-full border-b border-border bg-background shadow-xs transition-colors",
+        "sticky top-[129px] md:top-16 xl:static z-30 w-full border-b border-border bg-background shadow-xs transition-colors",
         className
       )}
     >

@@ -55,7 +55,7 @@ export function CustomCakeBanner() {
   return (
     <aside
       aria-label="Custom celebration cake promotion"
-      className="relative rounded-sm border border-border bg-gradient-to-r from-card to-caramel/5 p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 my-8"
+      className="relative rounded-sm border border-border bg-gradient-to-r from-card to-caramel/5 p-4 sm:p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-5 mt-3 mb-4 sm:mt-4 sm:mb-6"
     >
       {/* Dismiss Button */}
       <button

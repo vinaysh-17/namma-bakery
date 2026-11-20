@@ -43,19 +43,9 @@ export default async function MenuPage() {
   const products = productsResult.data;
 
   return (
-    <div className="pt-3 pb-8 sm:pt-4 sm:pb-12">
-      {/* Introduction & Custom Cake Promotional Section (Scrolls away normally) */}
+    <div className="pb-8 sm:pb-12">
+      {/* Custom Cake Enquiry Banner */}
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <div className="mb-4 sm:mb-5">
-          <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Bakery Menu
-          </h1>
-          <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-            Fresh celebration cakes, savoury snacks, and neighbourhood classics.
-          </p>
-        </div>
-
-        {/* Custom Cake Enquiry Banner */}
         <CustomCakeBanner />
       </div>
 

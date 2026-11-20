@@ -140,7 +140,7 @@ export function Header({ hoursLabel }: { hoursLabel?: string | null }) {
   return (
     <header
       className={cn(
-        "sticky top-0 z-40 w-full transition-all duration-300",
+        "sticky top-0 z-40 w-full transition-colors duration-200",
         isScrolled
           ? "border-b border-border bg-background/95 backdrop-blur-md shadow-2xs"
           : "border-b border-border/40 bg-background/80 backdrop-blur-xs"

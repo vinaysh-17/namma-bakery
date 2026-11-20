@@ -1,13 +1,6 @@
 export default function MenuLoading() {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12 animate-pulse">
-      {/* Header skeleton */}
-      <div className="mb-8 space-y-2">
-        <div className="h-4 w-32 rounded bg-muted/60" />
-        <div className="h-8 w-48 rounded bg-muted/80" />
-        <div className="h-4 w-72 rounded bg-muted/50" />
-      </div>
-
+    <div className="mx-auto max-w-6xl px-4 pt-3 pb-8 sm:px-6 sm:pt-4 sm:pb-12 animate-pulse">
       {/* Category Nav skeleton */}
       <div className="mb-8 flex gap-2 overflow-x-auto pb-2">
         {Array.from({ length: 5 }).map((_, i) => (

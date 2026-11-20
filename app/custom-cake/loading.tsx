@@ -2,10 +2,10 @@ export default function CustomCakeLoading() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12 animate-pulse space-y-8">
       {/* Hero skeleton */}
-      <div className="rounded-sm border border-border bg-card p-6 sm:p-8 space-y-3">
-        <div className="h-4 w-32 rounded bg-muted/60" />
-        <div className="h-8 w-64 rounded bg-muted/80" />
-        <div className="h-4 w-96 rounded bg-muted/50" />
+      <div className="rounded-sm border border-border bg-card p-4 sm:p-8 space-y-3">
+        <div className="h-4 w-32 max-w-full rounded bg-muted/60" />
+        <div className="h-8 w-full max-w-xs rounded bg-muted/80" />
+        <div className="h-4 w-full max-w-sm rounded bg-muted/50" />
       </div>
 
       {/* Form sections skeleton */}

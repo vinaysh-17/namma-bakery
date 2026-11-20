@@ -89,28 +89,20 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
         </Link>
       </nav>
 
-      {/* Page Title */}
-      <div className="mb-8 flex flex-col justify-between gap-4 border-b border-border pb-6 sm:flex-row sm:items-end">
+      {/* Page Title & Actions */}
+      <div className="mb-6 sm:mb-8 flex items-center justify-between gap-3 border-b border-border pb-5 sm:pb-6">
         <div>
-          <span className="font-kannada text-xs font-medium text-caramel">
-            ನಮ್ಮ ಬೇಕರಿ ಶಾಪಿಂಗ್ ಕಾರ್ಟ್
-          </span>
-          <h1 className="mt-1 font-heading text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+          <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground sm:text-3xl lg:text-4xl">
             Shopping Cart
           </h1>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-muted-foreground">
-            {itemCount} {itemCount === 1 ? "item" : "items"}
-          </span>
-          <button
-            type="button"
-            onClick={clearCart}
-            className="inline-flex min-touch-target items-center px-3 text-xs font-medium text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive"
-          >
-            Clear cart
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={clearCart}
+          className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-sm border border-border bg-card/60 px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+        >
+          Clear cart
+        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:gap-10">
@@ -133,7 +125,7 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
                 return (
                   <li
                     key={item.itemKey}
-                    className="flex flex-col gap-4 p-4 sm:p-5"
+                    className="flex flex-col gap-4 p-4 sm:p-5 [contain:content]"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
@@ -339,7 +331,7 @@ export function CartView({ hoursLabel }: { hoursLabel?: string | null } = {}) {
       {/* Mobile-Only Sticky Bottom Checkout Action Bar */}
       <aside
         aria-label="Mobile checkout action bar"
-        className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-lg backdrop-blur-md lg:hidden sm:px-6"
+        className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-md lg:hidden sm:px-6 transform-gpu"
       >
         <div className="mx-auto max-w-5xl">
           <div className="mb-2 flex items-center justify-between text-xs">

@@ -426,12 +426,6 @@ export function CakeConfigurator({
             </Link>
           </div>
         )}
-
-        {product.requires_confirmation && isOrderable && (
-          <p className="text-[11px] text-muted-foreground">
-            * This custom cake requires confirmation from our kitchen team after order placement.
-          </p>
-        )}
       </div>
     </div>
   );
